@@ -10,15 +10,23 @@
 		"Other"
 	],
 	"activationEvents": [
-        "onCommand:yscript.graph.show"
+        "onCustomEditor:yscript.graph"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
-		"commands": [
+		"customEditors": [
 			{
-				"command": "yscript.graph.show",
-				"title": "Show Graph",
-				"category": "yscript"
+				"viewType": "yscript.graph",
+				"displayName": "yscript Graph",
+				"selector": [
+					{
+						"filenamePattern": "*.ys"
+					},
+					{
+						"filenamePattern": "*.yscript"
+					}
+				],
+				"priority": "option"
 			}
 		]
 	},
