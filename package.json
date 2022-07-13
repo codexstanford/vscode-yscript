@@ -10,13 +10,13 @@
 		"Other"
 	],
 	"activationEvents": [
-        "onCommand:yscript.showGraph"
+        "onCommand:yscript.graph.show"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
 		"commands": [
 			{
-				"command": "yscript.showGraph",
+				"command": "yscript.graph.show",
 				"title": "Show Graph",
 				"category": "yscript"
 			}
