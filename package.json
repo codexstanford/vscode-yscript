@@ -4,20 +4,21 @@
 	"description": "Tools for writing and working with yscript programs.",
 	"version": "0.0.1",
 	"engines": {
-		"vscode": "^1.69.0"
+		"vscode": "^1.68.0"
 	},
 	"categories": [
 		"Other"
 	],
 	"activationEvents": [
-        "onCommand:yscript.helloWorld"
+        "onCommand:yscript.showGraph"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
 		"commands": [
 			{
-				"command": "yscript.helloWorld",
-				"title": "Hello World"
+				"command": "yscript.showGraph",
+				"title": "Show Graph",
+				"category": "yscript"
 			}
 		]
 	},
