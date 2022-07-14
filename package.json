@@ -14,21 +14,16 @@
 	],
 	"main": "./out/extension.js",
 	"contributes": {
-		"customEditors": [
-			{
-				"viewType": "yscript.graph",
-				"displayName": "yscript Graph",
-				"selector": [
-					{
-						"filenamePattern": "*.ys"
-					},
-					{
-						"filenamePattern": "*.yscript"
-					}
-				],
-				"priority": "option"
-			}
-		]
+		"customEditors": [{
+			"viewType": "yscript.graph",
+			"displayName": "yscript Graph",
+			"selector": [{
+				"filenamePattern": "*.ys"
+			}, {
+				"filenamePattern": "*.yscript"
+			}],
+			"priority": "option"
+		}]
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
