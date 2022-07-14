@@ -7,7 +7,9 @@ const graphJsRelativePath = path.join('resources', 'graph', 'js', 'compiled', 'a
 
 export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
-		vscode.window.registerCustomEditorProvider('yscript.graph', new YscriptGraphEditorProvider(context)));
+		vscode.window.registerCustomEditorProvider(
+			'yscript.graph',
+			new YscriptGraphEditorProvider(context)));
 }
 
 class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
@@ -15,7 +17,9 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
-	public resolveCustomTextEditor(document: vscode.TextDocument, webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): void {
+	public resolveCustomTextEditor(
+		document: vscode.TextDocument,
+		webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): void {
 		// Start loading HTML source from resources
 		const rawHtml = fs.readFile(
 			path.join(this.context.extensionPath, graphHtmlRelativePath),
@@ -26,14 +30,16 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 
 		// Set up event listeners
 
-		const textChangeSub = vscode.workspace.onDidChangeTextDocument(debounce((evt: vscode.TextDocumentChangeEvent) => {
-			if (evt.document.uri.toString() !== document.uri.toString()) return;
-			if (document.getText() === this.previousContent) return;
+		const textChangeSub = vscode.workspace.onDidChangeTextDocument(
+			debounce(
+				(evt: vscode.TextDocumentChangeEvent) => {
+					if (evt.document.uri.toString() !== document.uri.toString()) return;
+					if (document.getText() === this.previousContent) return;
 
-			this.previousContent = document.getText();
+					this.previousContent = document.getText();
 
-			_updateGraphFromCode(webviewPanel.webview, document.getText());
-		}, 100));
+					_updateGraphFromCode(webviewPanel.webview, document.getText());
+			}, 100));
 
 		webviewPanel.onDidDispose(textChangeSub.dispose);
 
@@ -61,7 +67,10 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		// Render HTML into webview
 		rawHtml.then(raw => {
 			webviewPanel.webview.options = { enableScripts: true };
-			webviewPanel.webview.html = _assembleGraphHtml(raw, webviewPanel.webview, this.context);
+			webviewPanel.webview.html = _assembleGraphHtml(
+				raw,
+				webviewPanel.webview,
+				this.context);
 			_updateGraphFromCode(webviewPanel.webview, document.getText());
 		});
 	}
@@ -76,7 +85,10 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
  * @param webview the webview into which the HTML will be rendered
  * @returns {string} the HTML with appropriate replacements made
  */
-function _assembleGraphHtml(htmlString: String, webview: vscode.Webview, context: vscode.ExtensionContext): string {
+function _assembleGraphHtml(
+	htmlString: String,
+	webview: vscode.Webview,
+	context: vscode.ExtensionContext): string {
 	const jsUri = vscode.Uri.file(path.join(context.extensionPath, graphJsRelativePath));
 	return htmlString.replace("/js/compiled/app.js", webview.asWebviewUri(jsUri).toString());
 }
