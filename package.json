@@ -7,7 +7,7 @@
 		"vscode": "^1.68.0"
 	},
 	"categories": [
-		"Other"
+		"Programming Languages"
 	],
 	"activationEvents": [
         "onCustomEditor:yscript.graph"
