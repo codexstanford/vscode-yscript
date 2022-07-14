@@ -11,6 +11,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
+	private previousContent = "";
+
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
 	public resolveCustomTextEditor(document: vscode.TextDocument, webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): void {
@@ -18,14 +20,43 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		const rawHtml = fs.readFile(
 			path.join(this.context.extensionPath, graphHtmlRelativePath),
 			{ encoding: 'utf-8' });
+		
+		// Store document content (for change detection)
+		this.previousContent = document.getText();
 
-		const textChangeSub = vscode.workspace.onDidChangeTextDocument(evt => {
-			if (evt.document.uri.toString() === document.uri.toString()) {
-				_updateGraphFromCode(webviewPanel.webview, document.getText());
+		// Set up event listeners
+
+		const textChangeSub = vscode.workspace.onDidChangeTextDocument(debounce((evt: vscode.TextDocumentChangeEvent) => {
+			if (evt.document.uri.toString() !== document.uri.toString()) return;
+			if (document.getText() === this.previousContent) return;
+
+			this.previousContent = document.getText();
+
+			_updateGraphFromCode(webviewPanel.webview, document.getText());
+		}, 100));
+
+		webviewPanel.onDidDispose(textChangeSub.dispose);
+
+		const graphChangeSub = webviewPanel.webview.onDidReceiveMessage(message => {
+			if (message.type !== 'programUpdated') {
+				console.log("Received unrecognized message:", message);
+				return;
+			}
+
+			const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
+
+			if (editor) {
+				editor.edit(eb => {
+					eb.replace(
+						new vscode.Range(
+							document.lineAt(0).range.start,
+							document.lineAt(document.lineCount - 1).range.end),
+						message.text);
+				});
 			}
 		});
 
-		webviewPanel.onDidDispose(textChangeSub.dispose);
+		webviewPanel.onDidDispose(graphChangeSub.dispose);
 
 		// Render HTML into webview
 		rawHtml.then(raw => {
@@ -56,3 +87,19 @@ function _updateGraphFromCode(webview: vscode.Webview, text: string) {
 		'text': text
 	});
 }
+
+/** Debounce lifted from Underscore */
+function debounce(f: Function, wait: number, immediate = false) {
+	let timeout: any;
+	return function() {
+		var context = this, args = arguments;
+		var later = function() {
+			timeout = null;
+			if (!immediate) f.apply(context, args);
+		};
+		var callNow = immediate && !timeout;
+		clearTimeout(timeout);
+		timeout = setTimeout(later, wait);
+		if (callNow) f.apply(context, args);
+	};
+};
