@@ -20,10 +20,12 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 	public resolveCustomTextEditor(
 		document: vscode.TextDocument,
 		webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): void {
-		// Start loading HTML source from resources
+		// Start loading required files
 		const rawHtml = fs.readFile(
 			path.join(this.context.extensionPath, graphHtmlRelativePath),
 			{ encoding: 'utf-8' });
+		const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+		const positions = workspaceFolder ? _readPositions(workspaceFolder) : Promise.resolve({});
 		
 		// Store document content (for change detection)
 		this.previousContent = document.getText();
@@ -44,35 +46,44 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		webviewPanel.onDidDispose(textChangeSub.dispose);
 
 		const graphChangeSub = webviewPanel.webview.onDidReceiveMessage(message => {
-			if (message.type !== 'programUpdated') {
-				console.log("Received unrecognized message:", message);
-				return;
-			}
+			switch (message.type) {
+				case 'positionsUpdated':
+					const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+					if (!folder) return;
+					_writePositions(folder, message.positions);
+					break;
+				case 'programUpdated':
+					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
-			const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
-
-			if (editor) {
-				editor.edit(eb => {
-					eb.replace(
-						new vscode.Range(
-							document.lineAt(0).range.start,
-							document.lineAt(document.lineCount - 1).range.end),
-						message.text);
-				});
+					if (editor) {
+						editor.edit(eb => {
+							eb.replace(
+								new vscode.Range(
+									document.lineAt(0).range.start,
+									document.lineAt(document.lineCount - 1).range.end),
+								message.text);
+						});
+					}
+					break;
+				default:
+					console.log("Received unrecognized message:", message);
 			}
 		});
 
 		webviewPanel.onDidDispose(graphChangeSub.dispose);
 
-		// Render HTML into webview
-		rawHtml.then(raw => {
-			webviewPanel.webview.options = { enableScripts: true };
-			webviewPanel.webview.html = _assembleGraphHtml(
-				raw,
-				webviewPanel.webview,
-				this.context);
-			_updateGraphFromCode(webviewPanel.webview, document.getText());
-		});
+		Promise.all([rawHtml, positions])
+			.then(([rawHtmlResolved, positionsResolved]) => {
+				webviewPanel.webview.options = { enableScripts: true };
+				webviewPanel.webview.html = _assembleGraphHtml(
+					rawHtmlResolved,
+					webviewPanel.webview,
+					this.context);
+
+				_updateGraphFromCode(webviewPanel.webview, document.getText());
+
+				_setGraphPositions(webviewPanel.webview, positionsResolved);
+			});
 	}
 }
 
@@ -98,6 +109,31 @@ function _updateGraphFromCode(webview: vscode.Webview, text: string) {
 		'type': 'yscript.graph.codeUpdated',
 		'text': text
 	});
+}
+
+function _setGraphPositions(webview: vscode.Webview, positions: any) {
+	webview.postMessage({
+		'type': 'yscript.graph.positionsRead',
+		'positions': positions
+	});
+}
+
+function _getPositionsFilePath(folder: vscode.WorkspaceFolder): string {
+	return path.join(folder.uri.fsPath, '.lide', 'positions.json');
+}
+
+function _readPositions(folder: vscode.WorkspaceFolder) {
+	return fs.mkdir(path.dirname(_getPositionsFilePath(folder)), { recursive: true })
+		.then(() => fs.readFile(_getPositionsFilePath(folder), { encoding: 'utf-8' }))
+		.then(JSON.parse)
+		.catch(() => { return {}; });
+}
+
+function _writePositions(folder: vscode.WorkspaceFolder, positions: any) {
+	return fs.mkdir(path.dirname(_getPositionsFilePath(folder)), { recursive: true })
+		.then(() => {
+			fs.writeFile(_getPositionsFilePath(folder), JSON.stringify(positions, null, 2));
+		});
 }
 
 /** Debounce lifted from Underscore */
