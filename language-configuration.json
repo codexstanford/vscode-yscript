@@ -1,0 +1,5 @@
+{
+  "autoClosingPairs": [
+    ["RULE ", " PROVIDES"]
+  ]
+}

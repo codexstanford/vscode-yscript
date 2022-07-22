@@ -20,7 +20,8 @@
         "extensions": [
           ".ys",
           ".yscript"
-        ]
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
     "customEditors": [
