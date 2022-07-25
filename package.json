@@ -72,6 +72,7 @@
     "typescript": "^4.7.4"
   },
   "dependencies": {
-    "web-tree-sitter": "^0.20.5"
+    "tree-sitter": "^0.20.0",
+    "tree-sitter-yscript": "file:../../tree-sitter-yscript"
   }
 }

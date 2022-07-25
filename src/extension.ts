@@ -1,7 +1,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import * as Parser from 'web-tree-sitter'; 
+import * as Parser from 'tree-sitter';
+const treeSitYscript = require('tree-sitter-yscript'); 
 
 const graphHtmlRelativePath = path.join('resources', 'graph', 'index.html');
 const graphJsRelativePath = path.join('resources', 'graph', 'js', 'compiled', 'app.js');
@@ -10,14 +11,8 @@ let parser: Parser;
 
 export async function activate(context: vscode.ExtensionContext) {
 	// Initialize tree-sitter parser
-	await Parser.init();
-	parser = new Parser();
-	// TODO tree-sitter manual notes that wasm is "considerably slower" than
-	// using Node bindings, but the Node bindings don't work with Node 18 yet.
-	// See https://github.com/tree-sitter/node-tree-sitter/issues/111
-	const lang = await Parser.Language.load(
-		path.join(context.extensionPath, "resources", "tree-sitter-yscript.wasm"));
-	parser.setLanguage(lang);
+	const parser = new Parser();
+	parser.setLanguage(treeSitYscript);
 
 	// Register subscriptions
 	context.subscriptions.push(
