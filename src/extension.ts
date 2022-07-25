@@ -12,9 +12,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Initialize tree-sitter parser
 	await Parser.init();
 	parser = new Parser();
-	// TODO tree-sitter manual notes that wasm is "considerably slower" than
-	// using Node bindings, but the Node bindings don't work with Node 18 yet.
-	// See https://github.com/tree-sitter/node-tree-sitter/issues/111
+	// tree-sitter manual notes that wasm is "considerably slower" than using
+	// Node bindings, but using the Node bindings from VS Code is a PITA. See:
+	// https://github.com/elm-tooling/elm-language-server/issues/692
+	// https://github.com/tree-sitter/node-tree-sitter/issues/111
+	// https://stackoverflow.com/questions/45062881/custom-node-version-to-run-vscode-extensions
 	const lang = await Parser.Language.load(
 		path.join(context.extensionPath, "resources", "tree-sitter-yscript.wasm"));
 	parser.setLanguage(lang);
