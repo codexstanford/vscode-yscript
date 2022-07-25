@@ -1,11 +1,25 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as Parser from 'web-tree-sitter'; 
 
 const graphHtmlRelativePath = path.join('resources', 'graph', 'index.html');
 const graphJsRelativePath = path.join('resources', 'graph', 'js', 'compiled', 'app.js');
 
-export function activate(context: vscode.ExtensionContext) {
+let parser: Parser;
+
+export async function activate(context: vscode.ExtensionContext) {
+	// Initialize tree-sitter parser
+	await Parser.init();
+	parser = new Parser();
+	// TODO tree-sitter manual notes that wasm is "considerably slower" than
+	// using Node bindings, but the Node bindings don't work with Node 18 yet.
+	// See https://github.com/tree-sitter/node-tree-sitter/issues/111
+	const lang = await Parser.Language.load(
+		path.join(context.extensionPath, "resources", "tree-sitter-yscript.wasm"));
+	parser.setLanguage(lang);
+
+	// Register subscriptions
 	context.subscriptions.push(
 		vscode.window.registerCustomEditorProvider(
 			'yscript.graph',
@@ -26,7 +40,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 			{ encoding: 'utf-8' });
 		const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
 		const positions = workspaceFolder ? _readPositions(workspaceFolder) : Promise.resolve({});
-		
+
 		// Store document content (for change detection)
 		this.previousContent = document.getText();
 
@@ -38,10 +52,12 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 					if (evt.document.uri.toString() !== document.uri.toString()) return;
 					if (document.getText() === this.previousContent) return;
 
+					console.log(parser.parse(document.getText()));
+
 					this.previousContent = document.getText();
 
 					_updateGraphFromCode(webviewPanel.webview, document.getText());
-			}, 100));
+				}, 100));
 
 		webviewPanel.onDidDispose(textChangeSub.dispose);
 
@@ -139,9 +155,9 @@ function _writePositions(folder: vscode.WorkspaceFolder, positions: any) {
 /** Debounce lifted from Underscore */
 function debounce(f: Function, wait: number, immediate = false) {
 	let timeout: any;
-	return function() {
+	return function () {
 		var context = this, args = arguments;
-		var later = function() {
+		var later = function () {
 			timeout = null;
 			if (!immediate) f.apply(context, args);
 		};
