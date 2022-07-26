@@ -49,6 +49,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
+    "build-tree-sitter": "tree-sitter build-wasm node_modules/tree-sitter-yscript && mv tree-sitter-yscript.wasm resources",
     "compile:ts": "tsc -p ./",
     "compile:yaml": "npx js-yaml ./syntax/yscript.tmGrammar.yaml > ./syntax/yscript.tmGrammar.json",
     "compile": "npm run compile:ts && npm run compile:yaml",
@@ -69,6 +70,7 @@
     "glob": "^8.0.3",
     "js-yaml": "^4.1.0",
     "mocha": "^10.0.0",
+    "tree-sitter-yscript": "file:../../tree-sitter-yscript",
     "typescript": "^4.7.4"
   },
   "dependencies": {
