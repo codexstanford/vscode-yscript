@@ -1,12 +1,16 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import * as Parser from 'web-tree-sitter'; 
+import * as Parser from 'web-tree-sitter';
+import * as TsYs from 'tree-sitter-yscript';
+import { parentPort } from 'worker_threads';
+import G = require('glob');
 
 const graphHtmlRelativePath = path.join('resources', 'graph', 'index.html');
 const graphJsRelativePath = path.join('resources', 'graph', 'js', 'compiled', 'app.js');
 
 let parser: Parser;
+let yscriptLang: Parser.Language;
 
 export async function activate(context: vscode.ExtensionContext) {
 	// Initialize tree-sitter parser
@@ -14,12 +18,13 @@ export async function activate(context: vscode.ExtensionContext) {
 	parser = new Parser();
 	// tree-sitter manual notes that wasm is "considerably slower" than using
 	// Node bindings, but using the Node bindings from VS Code is a PITA. See:
+	// https://github.com/microsoft/vscode/issues/658
 	// https://github.com/elm-tooling/elm-language-server/issues/692
 	// https://github.com/tree-sitter/node-tree-sitter/issues/111
 	// https://stackoverflow.com/questions/45062881/custom-node-version-to-run-vscode-extensions
-	const lang = await Parser.Language.load(
+	yscriptLang = await Parser.Language.load(
 		path.join(context.extensionPath, "resources", "tree-sitter-yscript.wasm"));
-	parser.setLanguage(lang);
+	parser.setLanguage(yscriptLang);
 
 	// Register subscriptions
 	context.subscriptions.push(
@@ -29,7 +34,7 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
-	private previousContent = "";
+	private ast: Parser.Tree = parser.parse("");
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
@@ -44,7 +49,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		const positions = workspaceFolder ? _readPositions(workspaceFolder) : Promise.resolve({});
 
 		// Store document content (for change detection)
-		this.previousContent = document.getText();
+		this.ast = parser.parse(document.getText());
 
 		// Set up event listeners
 
@@ -52,11 +57,12 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 			debounce(
 				(evt: vscode.TextDocumentChangeEvent) => {
 					if (evt.document.uri.toString() !== document.uri.toString()) return;
-					if (document.getText() === this.previousContent) return;
 
-					console.log(parser.parse(document.getText()));
+					const newAst = parser.parse(document.getText());
 
-					this.previousContent = document.getText();
+					this.ast = newAst;
+
+					console.log("model:", _astToGraphModel(newAst.walk() as TsYs.TreeCursor));
 
 					_updateGraphFromCode(webviewPanel.webview, document.getText());
 				}, 100));
@@ -103,6 +109,161 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 				_setGraphPositions(webviewPanel.webview, positionsResolved);
 			});
 	}
+}
+
+function _createFact() {
+	return {
+		determinings: new Set,
+		requirings: new Set
+	};
+}
+
+function _findAncestry(node: TsYs.SyntaxNode): TsYs.SyntaxNode[] {
+	const ancestry = [];
+	let currentNode = node;
+
+	while (currentNode.parent) {
+		ancestry.unshift(currentNode.parent);
+		currentNode = currentNode.parent;
+	}
+
+	// Only some ancestors are interesting, so filter the list down to those
+	return ancestry.filter(node => {
+		return (
+			node.type === TsYs.SyntaxType.OnlyIf ||
+			node.type === TsYs.SyntaxType.RuleDefinition
+		);
+	});
+}
+
+function _ancestryToPath(ancestors: TsYs.SyntaxNode[]): any[] {
+	const path = [];
+	for (let i = 0; i < ancestors.length; i++) {
+		const currentNode = ancestors[i];
+		switch (currentNode.type) {
+			case TsYs.SyntaxType.RuleDefinition: {
+				path.push(currentNode.nameNode.text);
+			}
+			case TsYs.SyntaxType.OnlyIf: {
+				const parentRule = ancestors[i - 1];
+				path.push(parentRule.children.findIndex(child => child === currentNode));
+			}
+		}
+	}
+
+	return path;
+}
+
+function _gotoPreorderSucc(cursor: TsYs.TreeCursor): boolean {
+    if (cursor.gotoFirstChild())  return true;
+    while (!cursor.gotoNextSibling()) {
+        if (!cursor.gotoParent()) return false;
+    }
+    return true;
+}
+
+function _astToGraphModel(cursor: TsYs.TreeCursor, db: any = {}) {
+	do {
+		const typedCursor = cursor as TsYs.TypedTreeCursor;
+		const currentNode = typedCursor.currentNode;
+
+		switch (currentNode.type) {
+			case TsYs.SyntaxType.RuleDefinition: {
+				const ruleName = currentNode.nameNode.text;
+				db.rules[ruleName] = db.rules[ruleName] || {
+					statements: []
+				};
+				break;
+			}
+			case TsYs.SyntaxType.OnlyIf: {
+				const descriptor = currentNode.dest_factNode.text;
+				db.facts[descriptor] = db.facts[descriptor] || _createFact();
+				db.facts[descriptor].determinings.add(
+					[currentNode.startPosition, currentNode.endPosition]
+				);
+
+				const ancestry = _findAncestry(currentNode);
+				const ancestorRule = ancestry.find(
+					node => node.type === TsYs.SyntaxType.RuleDefinition
+				) as TsYs.RuleDefinitionNode;
+
+				db.rules[ancestorRule.nameNode.text].statements.push({
+					type: 'only-if',
+					dest_fact: descriptor 
+				});
+
+				break;
+			}
+			case TsYs.SyntaxType.FactExpr: {
+				const descriptor = currentNode.text;
+
+				db.facts[descriptor] = db.facts[descriptor] || _createFact();
+				db.facts[descriptor].requirings.add(_ancestryToPath(_findAncestry(currentNode)));
+
+				break;
+			}
+		}
+	} while (_gotoPreorderSucc(cursor));
+
+	return db;
+}
+
+function _astToGraphModel2(node: Parser.SyntaxNode) {
+	const factExprQ = yscriptLang.query(
+		`(fact_expr @fact)`
+	);
+
+	const facts: Record<string, any> = {};
+	const onlyIfQ = yscriptLang.query(
+		`(only_if @onlyIf
+			dest_fact: (descriptor) @dest_descriptor)`
+	);
+
+	const rules: Record<string, any> = {};
+	const ruleQ = yscriptLang.query(
+		`(rule_definition @rule
+			name: (descriptor) @name)`
+	);
+	ruleQ.matches(node).forEach(match => {
+		const [ruleCapture, nameCapture] = match.captures;
+		const ruleName = nameCapture.node.text;
+		rules[ruleName] = rules[ruleName] || {
+			statements: []
+		};
+
+		onlyIfQ.matches(ruleCapture.node).forEach(match => {
+			const [onlyIfCapture, destFactCapture] = match.captures;
+
+			const descriptor = destFactCapture.node.text;
+			facts[descriptor] = facts[descriptor] || {
+				determiners: new Set,
+				requirers: new Set
+			};
+			facts[descriptor].determiners.add(
+				[destFactCapture.node.startPosition, destFactCapture.node.endPosition]
+			);
+
+			const statement = {
+				type: 'only-if',
+				dest_fact: descriptor,
+				src_expr: {} 
+			};
+			rules[ruleName].statements.push(statement);
+
+			factExprQ.captures(onlyIfCapture.node).forEach(capture => {
+				const descriptor = capture.node.text;
+				facts[descriptor] = facts[descriptor] || {
+					determiners: new Set,
+					requirers: new Set
+				};
+				facts[descriptor].requirers.add(
+					[capture.node.startPosition, capture.node.endPosition]
+				);
+			});
+		});
+	});
+
+	return { facts };
 }
 
 /**
