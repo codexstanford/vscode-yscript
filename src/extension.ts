@@ -159,9 +159,10 @@ function _ensureGetIn(root: any, path: string[]): any {
 }
 
 function _createFact() {
+	// Yes, these are two different types, see `astToGraphModel` for details
 	return {
-		determiners: new Set,
-		requirers: new Set
+		determiners: [],
+		requirers: {}
 	};
 }
 
@@ -255,9 +256,11 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 				if (!destFactNode) throw new Error("Found ONLY IF with no dest_fact");
 				const descriptor = destFactNode.text;
 				db.facts[descriptor] = db.facts[descriptor] || _createFact();
-				db.facts[descriptor].determiners.add(
-					_lineageToPath(_findLineage(destFactNode))
-				);
+				db.facts[descriptor].determiners.push({
+					// Take the rule and statement index as a path, rest is irrelevant
+					path: _lineageToPath(_findLineage(destFactNode)).slice(0, 2),
+					position: [currentNode.startPosition, currentNode.endPosition]
+				});
 
 				const lineage = _findLineage(currentNode);
 				const ancestorRule = lineage.find(
@@ -288,15 +291,18 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 			case 'fact_expr': {
 				const descriptor = currentNode.text;
 				const lineage = _findLineage(currentNode);
-				const lineagePath = _lineageToPath([...lineage, currentNode]);
+				const [ruleName, statementIdx, ...exprPath] = _lineageToPath(lineage);
 
+				// We're going to build up a structure like e.g.
+				//   {
+				//     "rule a": { 0: {}, 1: {} },
+				//     "rule b": { 0: {} }
+				//   }
+				// We can flatten this into a list of [rule, statementIdx] paths once
+				// we've gone through the whole AST.
 				db.facts[descriptor] = db.facts[descriptor] || _createFact();
-				db.facts[descriptor].requirers.add({
-					path: lineagePath.slice(0, -1),
-					position: [currentNode.startPosition, currentNode.endPosition]
-				});
+				_ensureGetIn(db.facts[descriptor].requirers, [ruleName, statementIdx]);
 
-				const [ruleName, statementIdx, ...exprPath] = lineagePath;
 				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
 				const factNode = _ensureGetIn(ancestorStatement, exprPath);
 				factNode.type = 'fact_expr';
@@ -307,6 +313,21 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 			}
 		}
 	} while (_gotoPreorderSucc(cursor));
+
+	// Flatten fact requirer hierarchies
+	for (const factName in db.facts) {
+		const fact = db.facts[factName];
+		const flatRequirers = [];
+
+		for (const ruleName in fact.requirers) {
+			const rule = fact.requirers[ruleName];
+			for (const statementIdx in rule) {
+				flatRequirers.push({ path: [ruleName, parseInt(statementIdx)] });
+			}
+		}
+
+		fact.requirers = flatRequirers;
+	}
 
 	return db;
 }
