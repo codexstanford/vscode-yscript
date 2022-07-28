@@ -3,6 +3,9 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import * as Parser from 'web-tree-sitter';
 
+import * as ast from './ast';
+import * as util from './util';
+
 const graphHtmlRelativePath = path.join('resources', 'graph', 'index.html');
 const graphJsRelativePath = path.join('resources', 'graph', 'js', 'compiled', 'app.js');
 
@@ -31,6 +34,7 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
+	// Start with empty AST (better than null)
 	private ast: Parser.Tree = parser.parse("");
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
@@ -48,41 +52,57 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		// Initialize AST
 		this.ast = parser.parse(document.getText());
 
-		// Set up event listeners
+		// Listen for text document changes
+
+		const _rerenderGraph = util.debounce(() => {
+			_updateGraphFromParse(webviewPanel.webview, this.ast);
+		}, 100);
 
 		const textChangeSub = vscode.workspace.onDidChangeTextDocument(
-			debounce(
-				(evt: vscode.TextDocumentChangeEvent) => {
-					if (evt.document.uri.toString() !== document.uri.toString()) return;
+			(evt: vscode.TextDocumentChangeEvent) => {
+				if (evt.document.uri.toString() !== document.uri.toString()) return;
 
-					this.ast = parser.parse(document.getText());
+				for (const change of evt.contentChanges) {
+					this.updateAst(evt.document.getText(), change);
+				}
 
-					_updateGraphFromParse(webviewPanel.webview, this.ast);
-				},
-				100));
+				_rerenderGraph();
+			});
 
 		webviewPanel.onDidDispose(textChangeSub.dispose);
 
+		// Listen for graph editor changes
+
 		const graphChangeSub = webviewPanel.webview.onDidReceiveMessage(message => {
 			switch (message.type) {
-				case 'positionsUpdated':
+				case 'positionsEdited':
 					const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+					// If no workspace, nowhere to store positions.
+					// TODO is there a way for the extension to require a workspace?
 					if (!folder) return;
 					_writePositions(folder, message.positions);
 					break;
-				case 'programUpdated':
+				case 'editSource': {
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
 					if (editor) {
+						// Get edit range
+						const [startPosition, endPosition] = message.range;
+						const editRange = new vscode.Range(
+							new vscode.Position(startPosition.row, startPosition.column),
+							new vscode.Position(endPosition.row, endPosition.column)
+						);
+
+						// Edit text. This will be picked up by our text document change listener,
+						// which will update our AST and then our graph.
 						editor.edit(eb => {
 							eb.replace(
-								new vscode.Range(
-									document.lineAt(0).range.start,
-									document.lineAt(document.lineCount - 1).range.end),
-								message.text);
+								editRange,
+								message.text
+							);
 						});
 					}
-					break;
+				}
 				default:
 					console.log("Received unrecognized message:", message);
 			}
@@ -90,6 +110,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 
 		webviewPanel.onDidDispose(graphChangeSub.dispose);
 
+		// Finish graph init
 		Promise.all([rawHtml, positions])
 			.then(([rawHtmlResolved, positionsResolved]) => {
 				webviewPanel.webview.options = { enableScripts: true };
@@ -98,10 +119,18 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 					webviewPanel.webview,
 					this.context);
 
-				_updateGraphFromCode(webviewPanel.webview, document.getText());
-
 				_setGraphPositions(webviewPanel.webview, positionsResolved);
+
+				_updateGraphFromParse(webviewPanel.webview, this.ast);
 			});
+	}
+
+	private updateAst(fullText: string, change: { range: vscode.Range, text: string }) {
+		this.ast.edit(
+			ast.getEditFromChange(change, this.ast.rootNode.text)
+		);
+
+		this.ast = parser.parse(fullText, this.ast);
 	}
 }
 
@@ -110,7 +139,7 @@ function _ensureGetIn(root: any, path: string[]): any {
 
 	const ensured = root[path[0]] || {};
 	root[path[0]] = ensured;
-	
+
 	return _ensureGetIn(ensured, path.slice(1));
 }
 
@@ -121,22 +150,23 @@ function _createFact() {
 	};
 }
 
-function _findAncestry(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
-	const ancestry = [];
-	let currentNode = node;
+function _findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
+	const lineage = [];
 
-	while (currentNode.parent) {
-		ancestry.unshift(currentNode.parent);
+	let currentNode: Parser.SyntaxNode | null = node;
+	while (currentNode !== null) {
+		lineage.unshift(currentNode);
 		currentNode = currentNode.parent;
 	}
 
 	// Only some ancestors are interesting, so filter the list down to those
-	return ancestry.filter(node => {
+	return lineage.filter(n => {
 		return (
-			node.type === 'and_expr' ||
-			node.type === 'or_expr' ||
-			node.type === 'only_if' ||
-			node.type === 'rule_definition'
+			n.id === node.id ||
+			n.type === 'and_expr' ||
+			n.type === 'or_expr' ||
+			n.type === 'only_if' ||
+			n.type === 'rule_definition'
 		);
 	});
 }
@@ -184,11 +214,11 @@ function _lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 }
 
 function _gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
-    if (cursor.gotoFirstChild())  return true;
-    while (!cursor.gotoNextSibling()) {
-        if (!cursor.gotoParent()) return false;
-    }
-    return true;
+	if (cursor.gotoFirstChild()) return true;
+	while (!cursor.gotoNextSibling()) {
+		if (!cursor.gotoParent()) return false;
+	}
+	return true;
 }
 
 function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, facts: {} }) {
@@ -210,11 +240,11 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 				const descriptor = destFactNode.text;
 				db.facts[descriptor] = db.facts[descriptor] || _createFact();
 				db.facts[descriptor].determiners.add(
-					_lineageToPath(_findAncestry(destFactNode))
+					_lineageToPath(_findLineage(destFactNode))
 				);
 
-				const ancestry = _findAncestry(currentNode);
-				const ancestorRule = ancestry.find(
+				const lineage = _findLineage(currentNode);
+				const ancestorRule = lineage.find(
 					node => node.type === 'rule_definition'
 				);
 
@@ -230,25 +260,25 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 			}
 			case 'and_expr':
 			case 'or_expr': {
-				const [ruleName, statementIdx, ...exprPath] = _lineageToPath(_findAncestry(currentNode));
+				const [ruleName, statementIdx, ...exprPath] = _lineageToPath(_findLineage(currentNode));
 				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
-				
-				if (!exprPath.length) {
-					ancestorStatement['src_expr'] = ancestorStatement['src_expr'] || {};
-					ancestorStatement['src_expr'].type = currentNode.type;
-				} else {
-					_ensureGetIn(ancestorStatement.src_expr, exprPath.slice(1)).type = currentNode.type;
-				}
+
+				if (!exprPath.length) throw new Error("Path to expression should contain at least src_expr");
+
+				_ensureGetIn(ancestorStatement, exprPath).type = currentNode.type;
 
 				break;
 			}
 			case 'fact_expr': {
 				const descriptor = currentNode.text;
-				const ancestry = _findAncestry(currentNode);
-				const lineagePath = _lineageToPath([...ancestry, currentNode]);
+				const lineage = _findLineage(currentNode);
+				const lineagePath = _lineageToPath([...lineage, currentNode]);
 
 				db.facts[descriptor] = db.facts[descriptor] || _createFact();
-				db.facts[descriptor].requirers.add(lineagePath.slice(0, -1));
+				db.facts[descriptor].requirers.add({
+					path: lineagePath.slice(0, -1),
+					position: [currentNode.startPosition, currentNode.endPosition]
+				});
 
 				const [ruleName, statementIdx, ...exprPath] = lineagePath;
 				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
@@ -319,19 +349,3 @@ function _writePositions(folder: vscode.WorkspaceFolder, positions: any) {
 			fs.writeFile(_getPositionsFilePath(folder), JSON.stringify(positions, null, 2));
 		});
 }
-
-/** Debounce lifted from Underscore */
-function debounce(f: Function, wait: number, immediate = false) {
-	let timeout: any;
-	return function () {
-		var context = this, args = arguments;
-		var later = function () {
-			timeout = null;
-			if (!immediate) f.apply(context, args);
-		};
-		var callNow = immediate && !timeout;
-		clearTimeout(timeout);
-		timeout = setTimeout(later, wait);
-		if (callNow) f.apply(context, args);
-	};
-};
