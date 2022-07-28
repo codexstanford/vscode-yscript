@@ -24,6 +24,13 @@ export function getEditFromChange(
     };
 }
 
+export function toVSRange(tsRange: [Parser.Point, Parser.Point]) {
+    return new vscode.Range(
+        new vscode.Position(tsRange[0].row, tsRange[0].column),
+        new vscode.Position(tsRange[1].row, tsRange[1].column)
+    );
+}
+
 function getIndicesFromRange(
     range: vscode.Range,
     text: string,

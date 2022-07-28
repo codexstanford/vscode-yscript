@@ -86,22 +86,25 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
 					if (editor) {
-						// Get edit range
-						const [startPosition, endPosition] = message.range;
-						const editRange = new vscode.Range(
-							new vscode.Position(startPosition.row, startPosition.column),
-							new vscode.Position(endPosition.row, endPosition.column)
-						);
-
 						// Edit text. This will be picked up by our text document change listener,
 						// which will update our AST and then our graph.
 						editor.edit(eb => {
 							eb.replace(
-								editRange,
+								ast.toVSRange(message.range),
 								message.text
 							);
 						});
 					}
+					break;
+				}
+				case 'showRange': {
+					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
+
+					if (editor) {
+						editor.revealRange(ast.toVSRange(message.range), vscode.TextEditorRevealType.Default);
+					}
+
+					break;
 				}
 				default:
 					console.log("Received unrecognized message:", message);
@@ -232,6 +235,7 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 				db.rules[ruleName] = db.rules[ruleName] || {
 					statements: []
 				};
+				db.rules[ruleName].range = [currentNode.startPosition, currentNode.endPosition];
 				break;
 			}
 			case 'only_if': {
