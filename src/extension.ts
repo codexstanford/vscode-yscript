@@ -97,6 +97,18 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 					}
 					break;
 				}
+				case 'selectRange': {
+					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
+
+					if (editor) {
+						const [startPosition, endPosition] = message.range;
+						editor.selection = new vscode.Selection(
+							ast.toVSPosition(startPosition),
+							ast.toVSPosition(endPosition));
+					}
+
+					break;
+				}
 				case 'showRange': {
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
@@ -289,6 +301,7 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 				const factNode = _ensureGetIn(ancestorStatement, exprPath);
 				factNode.type = 'fact_expr';
 				factNode.descriptor = descriptor;
+				factNode.range = [currentNode.startPosition, currentNode.endPosition];
 
 				break;
 			}

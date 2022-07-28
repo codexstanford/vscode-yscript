@@ -24,11 +24,12 @@ export function getEditFromChange(
     };
 }
 
+export function toVSPosition(tsPoint: Parser.Point) {
+    return new vscode.Position(tsPoint.row, tsPoint.column);
+}
+
 export function toVSRange(tsRange: [Parser.Point, Parser.Point]) {
-    return new vscode.Range(
-        new vscode.Position(tsRange[0].row, tsRange[0].column),
-        new vscode.Position(tsRange[1].row, tsRange[1].column)
-    );
+    return new vscode.Range(toVSPosition(tsRange[0]), toVSPosition(tsRange[1]));
 }
 
 function getIndicesFromRange(
