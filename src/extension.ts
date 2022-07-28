@@ -335,13 +335,6 @@ function _updateGraphFromParse(webview: vscode.Webview, ast: Parser.Tree): void 
 	});
 }
 
-function _updateGraphFromCode(webview: vscode.Webview, text: string) {
-	webview.postMessage({
-		'type': 'yscript.graph.codeUpdated',
-		'text': text
-	});
-}
-
 function _setGraphPositions(webview: vscode.Webview, positions: any) {
 	webview.postMessage({
 		'type': 'yscript.graph.positionsRead',
