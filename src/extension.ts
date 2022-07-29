@@ -102,6 +102,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 
 					if (editor) {
 						const [startPosition, endPosition] = message.range;
+						editor.revealRange(ast.toVSRange(message.range));
 						editor.selection = new vscode.Selection(
 							ast.toVSPosition(startPosition),
 							ast.toVSPosition(endPosition));
@@ -113,7 +114,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
 					if (editor) {
-						editor.revealRange(ast.toVSRange(message.range), vscode.TextEditorRevealType.Default);
+						editor.revealRange(ast.toVSRange(message.range));
 					}
 
 					break;
