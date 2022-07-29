@@ -244,11 +244,13 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 
 		switch (currentNode.type) {
 			case 'rule_definition': {
-				const ruleName = currentNode.childForFieldName('name')?.text;
-				if (!ruleName) throw new Error("Found rule with no name");
+				const nameNode = currentNode.childForFieldName('name');
+				if (!nameNode) throw new Error("Found rule with no name");
+				const ruleName = nameNode.text;
 				db.rules[ruleName] = db.rules[ruleName] || {
 					statements: []
 				};
+				db.rules[ruleName].name = { range: [nameNode.startPosition, nameNode.endPosition] };
 				db.rules[ruleName].range = [currentNode.startPosition, currentNode.endPosition];
 				break;
 			}
@@ -273,7 +275,10 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 
 				db.rules[ancestorRuleName].statements.push({
 					type: 'only_if',
-					dest_fact: descriptor
+					dest_fact: {
+						descriptor,
+						range: [destFactNode.startPosition, destFactNode.endPosition]
+					}
 				});
 
 				break;
