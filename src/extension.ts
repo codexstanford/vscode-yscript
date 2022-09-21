@@ -9,23 +9,9 @@ import * as util from './util';
 const graphHtmlRelativePath = path.join('resources', 'graph', 'index.html');
 const graphJsRelativePath = path.join('resources', 'graph', 'js', 'compiled', 'app.js');
 
-let parser: Parser;
-let yscriptLang: Parser.Language;
+let preloadedParser: Parser;
 
 export async function activate(context: vscode.ExtensionContext) {
-	// Initialize tree-sitter parser
-	await Parser.init();
-	parser = new Parser();
-	// tree-sitter manual notes that wasm is "considerably slower" than using
-	// Node bindings, but using the Node bindings from VS Code is a PITA. See:
-	// https://github.com/microsoft/vscode/issues/658
-	// https://github.com/elm-tooling/elm-language-server/issues/692
-	// https://github.com/tree-sitter/node-tree-sitter/issues/111
-	// https://stackoverflow.com/questions/45062881/custom-node-version-to-run-vscode-extensions
-	yscriptLang = await Parser.Language.load(
-		path.join(context.extensionPath, "resources", "tree-sitter-yscript.wasm"));
-	parser.setLanguage(yscriptLang);
-
 	// Register subscriptions
 	context.subscriptions.push(
 		vscode.window.registerCustomEditorProvider(
@@ -34,14 +20,21 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
-	// Start with empty AST (better than null)
-	private ast: Parser.Tree = parser.parse("");
-
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
 	public resolveCustomTextEditor(
 		document: vscode.TextDocument,
-		webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): void {
+		webviewPanel: vscode.WebviewPanel,
+		token: vscode.CancellationToken): void {
+		// Initialize tree-sitter parser
+		const parserLoad = preloadedParser
+            ? Promise.resolve(preloadedParser)
+            : loadParser(
+                path.join(
+                    this.context.extensionPath,
+                    'resources',
+                    'tree-sitter-yscript.wasm'));
+
 		// Start loading required files
 		const rawHtml = fs.readFile(
 			path.join(this.context.extensionPath, graphHtmlRelativePath),
@@ -49,13 +42,36 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
 		const positions = workspaceFolder ? _readPositions(workspaceFolder) : Promise.resolve({});
 
+		// Finish graph init
+		Promise.all([parserLoad, rawHtml, positions])
+			.then(([parserResolved, rawHtmlResolved, positionsResolved]) => {
+				webviewPanel.webview.options = { enableScripts: true };
+				webviewPanel.webview.html = _assembleGraphHtml(
+					rawHtmlResolved,
+					webviewPanel.webview,
+					this.context);
+
+				_setGraphPositions(webviewPanel.webview, positionsResolved);
+
+				new GraphEditor(document, webviewPanel, parserResolved);
+			});
+	}
+}
+
+class GraphEditor {
+	private tree: Parser.Tree;
+
+	constructor(
+		private readonly document: vscode.TextDocument,
+		private readonly webviewPanel: vscode.WebviewPanel,
+		private readonly parser: Parser) {
 		// Initialize AST
-		this.ast = parser.parse(document.getText());
+		this.tree = parser.parse(document.getText());
 
 		// Listen for text document changes
 
 		const _rerenderGraph = util.debounce(() => {
-			_updateGraphFromParse(webviewPanel.webview, this.ast);
+			_updateGraphFromParse(webviewPanel.webview, this.tree);
 		}, 100);
 
 		const textChangeSub = vscode.workspace.onDidChangeTextDocument(
@@ -75,6 +91,14 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 
 		const graphChangeSub = webviewPanel.webview.onDidReceiveMessage(message => {
 			switch (message.type) {
+				case 'appReady':
+					// Web app has finished setting up and is ready to receive messages.
+					// Set the target language to Epilog and send the initial program state.
+					initGraphForYscript(this.webviewPanel.webview);
+					_readPositions(vscode.workspace.getWorkspaceFolder(this.document.uri)).then(positions => {
+						_setGraphPositions(this.webviewPanel.webview, positions);
+						_updateGraphFromParse(this.webviewPanel.webview, this.tree);
+					});
 				case 'positionsEdited':
 					const folder = vscode.workspace.getWorkspaceFolder(document.uri);
 					// If no workspace, nowhere to store positions.
@@ -125,28 +149,14 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		});
 
 		webviewPanel.onDidDispose(graphChangeSub.dispose);
-
-		// Finish graph init
-		Promise.all([rawHtml, positions])
-			.then(([rawHtmlResolved, positionsResolved]) => {
-				webviewPanel.webview.options = { enableScripts: true };
-				webviewPanel.webview.html = _assembleGraphHtml(
-					rawHtmlResolved,
-					webviewPanel.webview,
-					this.context);
-
-				_setGraphPositions(webviewPanel.webview, positionsResolved);
-
-				_updateGraphFromParse(webviewPanel.webview, this.ast);
-			});
 	}
 
 	private updateAst(fullText: string, change: { range: vscode.Range, text: string }) {
-		this.ast.edit(
-			ast.getEditFromChange(change, this.ast.rootNode.text)
+		this.tree.edit(
+			ast.getEditFromChange(change, this.tree.rootNode.text)
 		);
 
-		this.ast = parser.parse(fullText, this.ast);
+		this.tree = this.parser.parse(fullText, this.tree);
 	}
 }
 
@@ -355,16 +365,23 @@ function _assembleGraphHtml(
 	return htmlString.replace("/js/compiled/app.js", webview.asWebviewUri(jsUri).toString());
 }
 
+function initGraphForYscript(webview: vscode.Webview): void {
+    webview.postMessage({
+        type: 'lide.initForLanguage',
+        language: 'yscript'
+    });
+}
+
 function _updateGraphFromParse(webview: vscode.Webview, ast: Parser.Tree): void {
 	webview.postMessage({
-		'type': 'yscript.graph.codeUpdated',
+		'type': 'lide.codeUpdated.yscript',
 		'model': _astToGraphModel(ast.rootNode.walk())
 	});
 }
 
 function _setGraphPositions(webview: vscode.Webview, positions: any) {
 	webview.postMessage({
-		'type': 'yscript.graph.positionsRead',
+		'type': 'lide.positionsRead',
 		'positions': positions
 	});
 }
@@ -373,7 +390,11 @@ function _getPositionsFilePath(folder: vscode.WorkspaceFolder): string {
 	return path.join(folder.uri.fsPath, '.lide', 'positions.json');
 }
 
-function _readPositions(folder: vscode.WorkspaceFolder) {
+function _readPositions(folder: vscode.WorkspaceFolder | undefined) {
+    const empty = { rule: {}, fact: {} };
+
+    if (!folder) return Promise.resolve(empty);
+
 	return fs.mkdir(path.dirname(_getPositionsFilePath(folder)), { recursive: true })
 		.then(() => fs.readFile(_getPositionsFilePath(folder), { encoding: 'utf-8' }))
 		.then(JSON.parse)
@@ -383,6 +404,20 @@ function _readPositions(folder: vscode.WorkspaceFolder) {
 function _writePositions(folder: vscode.WorkspaceFolder, positions: any) {
 	return fs.mkdir(path.dirname(_getPositionsFilePath(folder)), { recursive: true })
 		.then(() => {
-			fs.writeFile(_getPositionsFilePath(folder), JSON.stringify(positions, null, 2));
+			fs.writeFile(_getPositionsFilePath(folder), JSON.stringify(positions || {}, null, 2));
 		});
+}
+
+async function loadParser(wasmPath: string): Promise<Parser> {
+	await Parser.init();
+	const parser = new Parser();
+	// tree-sitter manual notes that wasm is "considerably slower" than using
+	// Node bindings, but using the Node bindings from VS Code is a PITA. See:
+	// https://github.com/microsoft/vscode/issues/658
+	// https://github.com/elm-tooling/elm-language-server/issues/692
+	// https://github.com/tree-sitter/node-tree-sitter/issues/111
+	// https://stackoverflow.com/questions/45062881/custom-node-version-to-run-vscode-extensions
+	const lang = await Parser.Language.load(wasmPath);
+	parser.setLanguage(lang);
+    return parser;
 }
