@@ -6,8 +6,8 @@ import * as Parser from 'web-tree-sitter';
 import * as ast from './ast';
 import * as util from './util';
 
-const graphHtmlRelativePath = path.join('resources', 'graph', 'index.html');
-const graphJsRelativePath = path.join('resources', 'graph', 'js', 'compiled', 'app.js');
+const graphHtmlRelativePath = path.join('node_modules', '@codexstanford', 'logic-graph', 'resources', 'public', 'index.html');
+const graphJsRelativePath = path.join('node_modules', '@codexstanford', 'logic-graph', 'resources', 'public', 'js', 'compiled', 'app.js');
 
 let preloadedParser: Parser;
 

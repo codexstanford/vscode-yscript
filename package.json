@@ -74,6 +74,7 @@
     "typescript": "^4.7.4"
   },
   "dependencies": {
+    "@codexstanford/logic-graph": "github:codexstanford/LIDE",
     "web-tree-sitter": "^0.20.5"
   }
 }
