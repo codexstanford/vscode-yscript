@@ -40,18 +40,18 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 			path.join(this.context.extensionPath, graphHtmlRelativePath),
 			{ encoding: 'utf-8' });
 		const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-		const positions = workspaceFolder ? _readPositions(workspaceFolder) : Promise.resolve({});
+		const positions = workspaceFolder ? readPositions(workspaceFolder) : Promise.resolve({});
 
 		// Finish graph init
 		Promise.all([parserLoad, rawHtml, positions])
 			.then(([parserResolved, rawHtmlResolved, positionsResolved]) => {
 				webviewPanel.webview.options = { enableScripts: true };
-				webviewPanel.webview.html = _assembleGraphHtml(
+				webviewPanel.webview.html = assembleGraphHtml(
 					rawHtmlResolved,
 					webviewPanel.webview,
 					this.context);
 
-				_setGraphPositions(webviewPanel.webview, positionsResolved);
+				setGraphPositions(webviewPanel.webview, positionsResolved);
 
 				new GraphEditor(document, webviewPanel, parserResolved);
 			});
@@ -70,8 +70,8 @@ class GraphEditor {
 
 		// Listen for text document changes
 
-		const _rerenderGraph = util.debounce(() => {
-			_updateGraphFromParse(webviewPanel.webview, this.tree);
+		const rerenderGraph = util.debounce(() => {
+			updateGraphFromParse(webviewPanel.webview, this.tree);
 		}, 100);
 
 		const textChangeSub = vscode.workspace.onDidChangeTextDocument(
@@ -82,7 +82,7 @@ class GraphEditor {
 					this.updateAst(evt.document.getText(), change);
 				}
 
-				_rerenderGraph();
+				rerenderGraph();
 			});
 
 		webviewPanel.onDidDispose(textChangeSub.dispose);
@@ -95,16 +95,16 @@ class GraphEditor {
 					// Web app has finished setting up and is ready to receive messages.
 					// Set the target language to Epilog and send the initial program state.
 					initGraphForYscript(this.webviewPanel.webview);
-					_readPositions(vscode.workspace.getWorkspaceFolder(this.document.uri)).then(positions => {
-						_setGraphPositions(this.webviewPanel.webview, positions);
-						_updateGraphFromParse(this.webviewPanel.webview, this.tree);
+					readPositions(vscode.workspace.getWorkspaceFolder(this.document.uri)).then(positions => {
+						setGraphPositions(this.webviewPanel.webview, positions);
+						updateGraphFromParse(this.webviewPanel.webview, this.tree);
 					});
 				case 'positionsEdited':
 					const folder = vscode.workspace.getWorkspaceFolder(document.uri);
 					// If no workspace, nowhere to store positions.
 					// TODO is there a way for the extension to require a workspace?
 					if (!folder) return;
-					_writePositions(folder, message.positions);
+					writePositions(folder, message.positions);
 					break;
 				case 'editSource': {
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
@@ -160,16 +160,16 @@ class GraphEditor {
 	}
 }
 
-function _ensureGetIn(root: any, path: string[]): any {
+function ensureGetIn(root: any, path: string[]): any {
 	if (!path.length) return root;
 
 	const ensured = root[path[0]] || {};
 	root[path[0]] = ensured;
 
-	return _ensureGetIn(ensured, path.slice(1));
+	return ensureGetIn(ensured, path.slice(1));
 }
 
-function _createFact() {
+function createFact() {
 	// Yes, these are two different types, see `astToGraphModel` for details
 	return {
 		determiners: [],
@@ -177,7 +177,7 @@ function _createFact() {
 	};
 }
 
-function _findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
+function findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
 	const lineage = [];
 
 	let currentNode: Parser.SyntaxNode | null = node;
@@ -198,7 +198,7 @@ function _findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
 	});
 }
 
-function _lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
+function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 	const path = [];
 	for (let i = 0; i < lineage.length; i++) {
 		const currentNode = lineage[i];
@@ -240,7 +240,7 @@ function _lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 	return path;
 }
 
-function _gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
+function gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
 	if (cursor.gotoFirstChild()) return true;
 	while (!cursor.gotoNextSibling()) {
 		if (!cursor.gotoParent()) return false;
@@ -248,7 +248,7 @@ function _gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
 	return true;
 }
 
-function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, facts: {} }) {
+function astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, facts: {} }) {
 	do {
 		const currentNode = cursor.currentNode();
 
@@ -268,14 +268,14 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 				const destFactNode = currentNode.childForFieldName('dest_fact');
 				if (!destFactNode) throw new Error("Found ONLY IF with no dest_fact");
 				const descriptor = destFactNode.text;
-				db.facts[descriptor] = db.facts[descriptor] || _createFact();
+				db.facts[descriptor] = db.facts[descriptor] || createFact();
 				db.facts[descriptor].determiners.push({
 					// Take the rule and statement index as a path, rest is irrelevant
-					path: _lineageToPath(_findLineage(destFactNode)).slice(0, 2),
+					path: lineageToPath(findLineage(destFactNode)).slice(0, 2),
 					position: [currentNode.startPosition, currentNode.endPosition]
 				});
 
-				const lineage = _findLineage(currentNode);
+				const lineage = findLineage(currentNode);
 				const ancestorRule = lineage.find(
 					node => node.type === 'rule_definition'
 				);
@@ -295,19 +295,19 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 			}
 			case 'and_expr':
 			case 'or_expr': {
-				const [ruleName, statementIdx, ...exprPath] = _lineageToPath(_findLineage(currentNode));
+				const [ruleName, statementIdx, ...exprPath] = lineageToPath(findLineage(currentNode));
 				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
 
 				if (!exprPath.length) throw new Error("Path to expression should contain at least src_expr");
 
-				_ensureGetIn(ancestorStatement, exprPath).type = currentNode.type;
+				ensureGetIn(ancestorStatement, exprPath).type = currentNode.type;
 
 				break;
 			}
 			case 'fact_expr': {
 				const descriptor = currentNode.text;
-				const lineage = _findLineage(currentNode);
-				const [ruleName, statementIdx, ...exprPath] = _lineageToPath(lineage);
+				const lineage = findLineage(currentNode);
+				const [ruleName, statementIdx, ...exprPath] = lineageToPath(lineage);
 
 				// We're going to build up a structure like e.g.
 				//   {
@@ -316,11 +316,11 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 				//   }
 				// We can flatten this into a list of [rule, statementIdx] paths once
 				// we've gone through the whole AST.
-				db.facts[descriptor] = db.facts[descriptor] || _createFact();
-				_ensureGetIn(db.facts[descriptor].requirers, [ruleName, statementIdx]);
+				db.facts[descriptor] = db.facts[descriptor] || createFact();
+				ensureGetIn(db.facts[descriptor].requirers, [ruleName, statementIdx]);
 
 				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
-				const factNode = _ensureGetIn(ancestorStatement, exprPath);
+				const factNode = ensureGetIn(ancestorStatement, exprPath);
 				factNode.type = 'fact_expr';
 				factNode.descriptor = descriptor;
 				factNode.range = [currentNode.startPosition, currentNode.endPosition];
@@ -328,7 +328,7 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
 				break;
 			}
 		}
-	} while (_gotoPreorderSucc(cursor));
+	} while (gotoPreorderSucc(cursor));
 
 	// Flatten fact requirer hierarchies
 	for (const factName in db.facts) {
@@ -357,7 +357,7 @@ function _astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, fact
  * @param webview the webview into which the HTML will be rendered
  * @returns {string} the HTML with appropriate replacements made
  */
-function _assembleGraphHtml(
+function assembleGraphHtml(
 	htmlString: String,
 	webview: vscode.Webview,
 	context: vscode.ExtensionContext): string {
@@ -372,39 +372,39 @@ function initGraphForYscript(webview: vscode.Webview): void {
     });
 }
 
-function _updateGraphFromParse(webview: vscode.Webview, ast: Parser.Tree): void {
+function updateGraphFromParse(webview: vscode.Webview, ast: Parser.Tree): void {
 	webview.postMessage({
 		'type': 'lide.codeUpdated.yscript',
-		'model': _astToGraphModel(ast.rootNode.walk())
+		'model': astToGraphModel(ast.rootNode.walk())
 	});
 }
 
-function _setGraphPositions(webview: vscode.Webview, positions: any) {
+function setGraphPositions(webview: vscode.Webview, positions: any) {
 	webview.postMessage({
 		'type': 'lide.positionsRead',
 		'positions': positions
 	});
 }
 
-function _getPositionsFilePath(folder: vscode.WorkspaceFolder): string {
+function getPositionsFilePath(folder: vscode.WorkspaceFolder): string {
 	return path.join(folder.uri.fsPath, '.lide', 'positions.json');
 }
 
-function _readPositions(folder: vscode.WorkspaceFolder | undefined) {
+function readPositions(folder: vscode.WorkspaceFolder | undefined) {
     const empty = { rule: {}, fact: {} };
 
     if (!folder) return Promise.resolve(empty);
 
-	return fs.mkdir(path.dirname(_getPositionsFilePath(folder)), { recursive: true })
-		.then(() => fs.readFile(_getPositionsFilePath(folder), { encoding: 'utf-8' }))
+	return fs.mkdir(path.dirname(getPositionsFilePath(folder)), { recursive: true })
+		.then(() => fs.readFile(getPositionsFilePath(folder), { encoding: 'utf-8' }))
 		.then(JSON.parse)
 		.catch(() => { return {}; });
 }
 
-function _writePositions(folder: vscode.WorkspaceFolder, positions: any) {
-	return fs.mkdir(path.dirname(_getPositionsFilePath(folder)), { recursive: true })
+function writePositions(folder: vscode.WorkspaceFolder, positions: any) {
+	return fs.mkdir(path.dirname(getPositionsFilePath(folder)), { recursive: true })
 		.then(() => {
-			fs.writeFile(_getPositionsFilePath(folder), JSON.stringify(positions || {}, null, 2));
+			fs.writeFile(getPositionsFilePath(folder), JSON.stringify(positions || {}, null, 2));
 		});
 }
 
