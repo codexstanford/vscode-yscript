@@ -177,6 +177,15 @@ function createFact() {
 	};
 }
 
+/**
+ * `node`'s "lineage" is the list of `node`'s ancestors up to the root of the
+ * program that are necessary to locate `node`. Not all ancestors are necessary
+ * for this (e.g. rule_body nodes convey no information), so not all are
+ * included.
+ * 
+ * @param node A Tree-sitter syntax node
+ * @returns An array of the interesting parents of `node`
+ */
 function findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
 	const lineage = [];
 
@@ -192,12 +201,20 @@ function findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
 			n.id === node.id ||
 			n.type === 'and_expr' ||
 			n.type === 'or_expr' ||
+			n.type === 'not_expr' ||
 			n.type === 'only_if' ||
 			n.type === 'rule_definition'
 		);
 	});
 }
 
+/**
+ * Convert a node's lineage to a path from the root of the program to that
+ * node. This allows you to look up a node given its lineage.
+ * 
+ * @param lineage As returned by `findLineage` 
+ * @returns An array of path segments, depending on the type of each ancestor in `lineage`
+ */
 function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 	const path = [];
 	for (let i = 0; i < lineage.length; i++) {
@@ -213,6 +230,7 @@ function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 			}
 			case 'and_expr':
 			case 'or_expr':
+			case 'not_expr':
 			case 'fact_expr': {
 				const parentNode = lineage[i - 1];
 				switch (parentNode.type) {
@@ -232,7 +250,12 @@ function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 						}
 						break;
 					}
+					case 'not_expr': {
+						path.push('negand');
+						break;
+					}
 				}
+				break;
 			}
 		}
 	}
@@ -294,7 +317,8 @@ function astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, facts
 				break;
 			}
 			case 'and_expr':
-			case 'or_expr': {
+			case 'or_expr':
+			case 'not_expr': {
 				const [ruleName, statementIdx, ...exprPath] = lineageToPath(findLineage(currentNode));
 				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
 
