@@ -94,11 +94,11 @@ class GraphEditor {
 				case 'appReady':
 					// Web app has finished setting up and is ready to receive messages.
 					// Set the target language to Epilog and send the initial program state.
-					initGraphForYscript(this.webviewPanel.webview);
-					readPositions(vscode.workspace.getWorkspaceFolder(this.document.uri)).then(positions => {
-						setGraphPositions(this.webviewPanel.webview, positions);
-						updateGraphFromParse(this.webviewPanel.webview, this.tree);
-					});
+					initGraphForYscript(this.webviewPanel.webview)
+						.then(() => readPositions(vscode.workspace.getWorkspaceFolder(this.document.uri)))
+						.then(positions => setGraphPositions(this.webviewPanel.webview, positions))
+						.then(() => updateGraphFromParse(this.webviewPanel.webview, this.tree));
+					break;
 				case 'positionsEdited':
 					const folder = vscode.workspace.getWorkspaceFolder(document.uri);
 					// If no workspace, nowhere to store positions.
@@ -389,11 +389,14 @@ function assembleGraphHtml(
 	return htmlString.replace("/js/compiled/app.js", webview.asWebviewUri(jsUri).toString());
 }
 
-function initGraphForYscript(webview: vscode.Webview): void {
-    webview.postMessage({
+function initGraphForYscript(webview: vscode.Webview): Thenable<boolean> {
+    return webview.postMessage({
         type: 'lide.initForLanguage',
         language: 'yscript'
-    });
+    }).then(posted => {
+		if (!posted) return Promise.reject("Failed to post init message to webview.");
+		return posted;
+	});
 }
 
 function updateGraphFromParse(webview: vscode.Webview, ast: Parser.Tree): void {
@@ -419,10 +422,9 @@ function readPositions(folder: vscode.WorkspaceFolder | undefined) {
 
     if (!folder) return Promise.resolve(empty);
 
-	return fs.mkdir(path.dirname(getPositionsFilePath(folder)), { recursive: true })
-		.then(() => fs.readFile(getPositionsFilePath(folder), { encoding: 'utf-8' }))
-		.then(JSON.parse)
-		.catch(() => { return {}; });
+	return fs.readFile(getPositionsFilePath(folder), { encoding: 'utf-8' })
+		.then(positions => JSON.parse(positions))
+		.catch(() => writePositions(folder, {}).then(() => ({})));
 }
 
 function writePositions(folder: vscode.WorkspaceFolder, positions: any) {
