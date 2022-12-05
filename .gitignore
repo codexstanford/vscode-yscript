@@ -2,5 +2,6 @@ syntax/yscript.tmGrammar.json
 out
 dist
 node_modules
+venv/
 .vscode-test/
 *.vsix

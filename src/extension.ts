@@ -5,7 +5,7 @@ import * as Parser from 'web-tree-sitter';
 import * as z3 from 'z3-solver';
 
 import * as ast from './ast';
-import { Bool, ProgramState } from './solve';
+import * as solve from './solve';
 import * as util from './util';
 
 const graphHtmlRelativePath = path.join('node_modules', '@codexstanford', 'logic-graph', 'resources', 'public', 'index.html');
@@ -60,7 +60,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 
 				setGraphPositions(webviewPanel.webview, positionsResolved);
 
-				new GraphEditor(document, webviewPanel, parserResolved, z3Resolved);
+				new GraphEditor(this.context, document, webviewPanel, parserResolved, z3Resolved);
 			});
 	}
 }
@@ -68,24 +68,26 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 class GraphEditor {
 	private tree: Parser.Tree;
 	private program: any;
-	private programState: ProgramState;
+	private factValues: any = {};
+	//private programState: ProgramState;
 
 	constructor(
+		private readonly extensionContext: vscode.ExtensionContext,
 		private readonly document: vscode.TextDocument,
 		private readonly webviewPanel: vscode.WebviewPanel,
 		private readonly parser: Parser,
-		z3: z3.Z3HighLevel & z3.Z3LowLevel) {
+		private readonly z3: z3.Z3HighLevel & z3.Z3LowLevel) {
 		// Initialize AST
 		this.tree = parser.parse(document.getText());
 
 		// Initialize Z3 solver
-		this.programState = new ProgramState(z3);
+		//this.programState = new ProgramState(z3);
 
 		// Listen for text document changes
 
 		const recompile = util.debounce(() => {
 			this.program = compileFromAst(this.tree.rootNode.walk());
-			this.programState.updateProgram(this.program);
+			// this.programState.updateProgram(this.program);
 
 			updateGraphProgram(webviewPanel.webview, this.program);
 		}, 100);
@@ -138,11 +140,13 @@ class GraphEditor {
 					break;
 				}
 				case 'incorporateFact': {
-					let value: Bool = Bool.unknown;
-					if (message.value === true) value = Bool.true;
-					if (message.value === false) value = Bool.false;
-					this.programState.incorporateFact(message.descriptor, value).then(() => {
-						updateGraphFacts(this.webviewPanel.webview, this.programState.extractFacts());
+					let value: solve.Bool = solve.Bool.unknown;
+					if (message.value === true) value = solve.Bool.true;
+					if (message.value === false) value = solve.Bool.false;
+
+					solve.incorporateFact(this.z3, this.extensionContext, this.program, this.factValues, message.descriptor, message.value).then((facts: any) => {
+						this.factValues = facts;
+						updateGraphFacts(this.webviewPanel.webview, facts);
 					});
 					break;
 				}
