@@ -21,9 +21,8 @@ export async function incorporateFact(
     z3: z3.Z3LowLevel,
     context: vscode.ExtensionContext,
     program: any,
-    existingFacts: any,
-    incDescriptor: string,
-    incValue: boolean)
+    assertions: any,
+    incDescriptor: string)
 {
     const cfg = z3.Z3.mk_config();
     const ctx = z3.Z3.mk_context(cfg);
@@ -43,31 +42,42 @@ export async function incorporateFact(
         return `(assert ${z3.Z3.ast_to_string(ctx, ast)})\n`;
     }).join('');
 
-    Object.entries(existingFacts).forEach(([descriptor, value]) => {
-        if (descriptor === incDescriptor) return;
+    Object.entries(assertions).forEach(([descriptor, value]) => {
         code += `(assert (= ${z3.Z3.ast_to_string(ctx, yscriptToZ3(z3, ctx, { descriptor }))} ${value ? 'true' : 'false'}))\n`;
     });
-
-    code += `(assert (= ${z3.Z3.ast_to_string(ctx, yscriptToZ3(z3, ctx, { descriptor: incDescriptor }))} ${incValue ? 'true' : 'false'}))\n`;
 
     const solverProcess = spawnIncorporateFact(context);
     
     const promise = new Promise(resolve => {
         solverProcess.stdout.on('data', consequences => {
             const result: any = {};
+            Object.entries(assertions).forEach(([descriptor, value]) => {
+                result[descriptor] = {
+                    value,
+                    source: 'assertion'
+                };
+            });
+            
             consequences
                 .toString()
                 .trim()
                 .split('\n')
+                .filter(Boolean)
                 .forEach((conseqAst: string) => {
                     const negated = conseqAst.startsWith('(not ');
                     const constant = negated ? conseqAst.slice(5, -1) : conseqAst;
                     if (!symbolsToDescriptors[constant]) throw new Error(`Received value for unknown fact "${constant}"`);
-                    result[symbolsToDescriptors[constant]] = negated ? false : true;
+                    if (result[symbolsToDescriptors[constant]]) return;
+                    result[symbolsToDescriptors[constant]] = {
+                        value: negated ? false : true,
+                        source: 'consequence'
+                    };
                 });
             resolve(result);
         });
     });
+
+    console.log(code);
 
     solverProcess.stdin.write(code, () => {
         solverProcess.stdin.end();

@@ -68,7 +68,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 class GraphEditor {
 	private tree: Parser.Tree;
 	private program: any;
-	private factValues: any = {};
+	private factAssertions: any = {};
 	//private programState: ProgramState;
 
 	constructor(
@@ -144,8 +144,13 @@ class GraphEditor {
 					if (message.value === true) value = solve.Bool.true;
 					if (message.value === false) value = solve.Bool.false;
 
-					solve.incorporateFact(this.z3, this.extensionContext, this.program, this.factValues, message.descriptor, message.value).then((facts: any) => {
-						this.factValues = facts;
+					if (value === solve.Bool.unknown) {
+						delete this.factAssertions[message.descriptor];
+					} else {
+						this.factAssertions[message.descriptor] = message.value;
+					}
+
+					solve.incorporateFact(this.z3, this.extensionContext, this.program, this.factAssertions, message.descriptor).then((facts: any) => {
 						updateGraphFacts(this.webviewPanel.webview, facts);
 					});
 					break;
