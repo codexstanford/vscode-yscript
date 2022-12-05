@@ -22,8 +22,8 @@ export async function incorporateFact(
     context: vscode.ExtensionContext,
     program: any,
     existingFacts: any,
-    descriptor: string,
-    value: boolean)
+    incDescriptor: string,
+    incValue: boolean)
 {
     const cfg = z3.Z3.mk_config();
     const ctx = z3.Z3.mk_context(cfg);
@@ -44,10 +44,11 @@ export async function incorporateFact(
     }).join('');
 
     Object.entries(existingFacts).forEach(([descriptor, value]) => {
+        if (descriptor === incDescriptor) return;
         code += `(assert (= ${z3.Z3.ast_to_string(ctx, yscriptToZ3(z3, ctx, { descriptor }))} ${value ? 'true' : 'false'}))\n`;
     });
 
-    code += `(assert (= ${z3.Z3.ast_to_string(ctx, yscriptToZ3(z3, ctx, { descriptor }))} ${value ? 'true' : 'false'}))\n`;
+    code += `(assert (= ${z3.Z3.ast_to_string(ctx, yscriptToZ3(z3, ctx, { descriptor: incDescriptor }))} ${incValue ? 'true' : 'false'}))\n`;
 
     const solverProcess = spawnIncorporateFact(context);
     
@@ -56,9 +57,14 @@ export async function incorporateFact(
             const result: any = {};
             consequences
                 .toString()
+                .trim()
                 .split('\n')
-                .filter(Boolean)
-                .forEach((constant: string) => result[symbolsToDescriptors[constant]] = true);
+                .forEach((conseqAst: string) => {
+                    const negated = conseqAst.startsWith('(not ');
+                    const constant = negated ? conseqAst.slice(5, -1) : conseqAst;
+                    if (!symbolsToDescriptors[constant]) throw new Error(`Received value for unknown fact "${constant}"`);
+                    result[symbolsToDescriptors[constant]] = negated ? false : true;
+                });
             resolve(result);
         });
     });
