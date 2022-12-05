@@ -2,14 +2,17 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as Parser from 'web-tree-sitter';
+import * as z3 from 'z3-solver';
 
 import * as ast from './ast';
+import { Bool, ProgramState } from './solve';
 import * as util from './util';
 
 const graphHtmlRelativePath = path.join('node_modules', '@codexstanford', 'logic-graph', 'resources', 'public', 'index.html');
 const graphJsRelativePath = path.join('node_modules', '@codexstanford', 'logic-graph', 'resources', 'public', 'js', 'compiled', 'app.js');
 
 let preloadedParser: Parser;
+let preloadedZ3: z3.Z3HighLevel & z3.Z3LowLevel;
 
 export async function activate(context: vscode.ExtensionContext) {
 	// Register subscriptions
@@ -35,6 +38,10 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
                     'resources',
                     'tree-sitter-yscript.wasm'));
 
+		const z3Load = preloadedZ3
+			? Promise.resolve(preloadedZ3)
+			: z3.init();
+
 		// Start loading required files
 		const rawHtml = fs.readFile(
 			path.join(this.context.extensionPath, graphHtmlRelativePath),
@@ -43,8 +50,8 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		const positions = workspaceFolder ? readPositions(workspaceFolder) : Promise.resolve({});
 
 		// Finish graph init
-		Promise.all([parserLoad, rawHtml, positions])
-			.then(([parserResolved, rawHtmlResolved, positionsResolved]) => {
+		Promise.all([parserLoad, z3Load, rawHtml, positions])
+			.then(([parserResolved, z3Resolved, rawHtmlResolved, positionsResolved]) => {
 				webviewPanel.webview.options = { enableScripts: true };
 				webviewPanel.webview.html = assembleGraphHtml(
 					rawHtmlResolved,
@@ -53,25 +60,34 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 
 				setGraphPositions(webviewPanel.webview, positionsResolved);
 
-				new GraphEditor(document, webviewPanel, parserResolved);
+				new GraphEditor(document, webviewPanel, parserResolved, z3Resolved);
 			});
 	}
 }
 
 class GraphEditor {
 	private tree: Parser.Tree;
+	private program: any;
+	private programState: ProgramState;
 
 	constructor(
 		private readonly document: vscode.TextDocument,
 		private readonly webviewPanel: vscode.WebviewPanel,
-		private readonly parser: Parser) {
+		private readonly parser: Parser,
+		z3: z3.Z3HighLevel & z3.Z3LowLevel) {
 		// Initialize AST
 		this.tree = parser.parse(document.getText());
 
+		// Initialize Z3 solver
+		this.programState = new ProgramState(z3);
+
 		// Listen for text document changes
 
-		const rerenderGraph = util.debounce(() => {
-			updateGraphFromParse(webviewPanel.webview, this.tree);
+		const recompile = util.debounce(() => {
+			this.program = compileFromAst(this.tree.rootNode.walk());
+			this.programState.updateProgram(this.program);
+
+			updateGraphProgram(webviewPanel.webview, this.program);
 		}, 100);
 
 		const textChangeSub = vscode.workspace.onDidChangeTextDocument(
@@ -82,7 +98,7 @@ class GraphEditor {
 					this.updateAst(evt.document.getText(), change);
 				}
 
-				rerenderGraph();
+				recompile();
 			});
 
 		webviewPanel.onDidDispose(textChangeSub.dispose);
@@ -93,11 +109,11 @@ class GraphEditor {
 			switch (message.type) {
 				case 'appReady':
 					// Web app has finished setting up and is ready to receive messages.
-					// Set the target language to Epilog and send the initial program state.
+					// Set the target language to yscript and send the initial program state.
 					initGraphForYscript(this.webviewPanel.webview)
 						.then(() => readPositions(vscode.workspace.getWorkspaceFolder(this.document.uri)))
 						.then(positions => setGraphPositions(this.webviewPanel.webview, positions))
-						.then(() => updateGraphFromParse(this.webviewPanel.webview, this.tree));
+						.then(() => recompile());
 					break;
 				case 'positionsEdited':
 					const folder = vscode.workspace.getWorkspaceFolder(document.uri);
@@ -119,6 +135,15 @@ class GraphEditor {
 							);
 						});
 					}
+					break;
+				}
+				case 'incorporateFact': {
+					let value: Bool = Bool.unknown;
+					if (message.value === true) value = Bool.true;
+					if (message.value === false) value = Bool.false;
+					this.programState.incorporateFact(message.descriptor, value).then(() => {
+						updateGraphFacts(this.webviewPanel.webview, this.programState.extractFacts());
+					});
 					break;
 				}
 				case 'selectRange': {
@@ -271,7 +296,7 @@ function gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
 	return true;
 }
 
-function astToGraphModel(cursor: Parser.TreeCursor, db: any = { rules: {}, facts: {} }) {
+function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts: {} }) {
 	do {
 		const currentNode = cursor.currentNode();
 
@@ -399,10 +424,17 @@ function initGraphForYscript(webview: vscode.Webview): Thenable<boolean> {
 	});
 }
 
-function updateGraphFromParse(webview: vscode.Webview, ast: Parser.Tree): void {
+function updateGraphProgram(webview: vscode.Webview, program: any): void {
 	webview.postMessage({
 		'type': 'lide.codeUpdated.yscript',
-		'model': astToGraphModel(ast.rootNode.walk())
+		'model': program
+	});
+}
+
+function updateGraphFacts(webview: vscode.Webview, facts: object): void {
+	webview.postMessage({
+		'type': 'lide.factsUpdated',
+		'facts': facts
 	});
 }
 

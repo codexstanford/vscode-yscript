@@ -75,6 +75,7 @@
   },
   "dependencies": {
     "@codexstanford/logic-graph": "github:codexstanford/LIDE",
-    "web-tree-sitter": "^0.20.5"
+    "web-tree-sitter": "^0.20.5",
+    "z3-solver": "^4.11.2"
   }
 }

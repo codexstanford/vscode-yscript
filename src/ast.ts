@@ -1,6 +1,25 @@
 import * as vscode from 'vscode';
 import * as Parser from 'web-tree-sitter';
 
+export type YscriptExpression = OnlyIfExpression | LogicExpression;
+
+export type OnlyIfExpression = {
+    type: 'only_if',
+    src_expr: LogicExpression,
+    dest_fact: FactExpression
+};
+
+export type FactExpression = {
+    type: 'fact_expr',
+    descriptor: string
+};
+
+export type LogicExpression = FactExpression | {
+    type: 'and_expr' | 'or_expr',
+    left: LogicExpression,
+    right: LogicExpression
+};
+
 /** Get a Tree-sitter Edit corresponding to a replacement by `change.text` at
  * `change.range` within `text`. */
 export function getEditFromChange(
