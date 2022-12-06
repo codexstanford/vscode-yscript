@@ -34,7 +34,6 @@ if check_result == unsat:
 solver = mk_solver(formula)
 _, consequences = solver.consequences([], solver.non_units())
 
-print('sat')
-print(os.linesep.join([c.children()[1].sexpr() for c in consequences]))
+print('sat\n' + os.linesep.join([c.children()[1].sexpr() for c in consequences]))
 
 exit(0)
