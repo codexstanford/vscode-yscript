@@ -140,6 +140,7 @@ class GraphEditor {
 					break;
 				}
 				case 'incorporateFact': {
+					const previousValue = this.factAssertions[message.descriptor];
 					let value: solve.Bool = solve.Bool.unknown;
 					if (message.value === true) value = solve.Bool.true;
 					if (message.value === false) value = solve.Bool.false;
@@ -150,8 +151,18 @@ class GraphEditor {
 						this.factAssertions[message.descriptor] = message.value;
 					}
 
-					solve.incorporateFact(this.z3, this.extensionContext, this.program, this.factAssertions, message.descriptor).then((facts: any) => {
-						updateGraphFacts(this.webviewPanel.webview, facts);
+					solve.incorporateFact(this.z3, this.extensionContext, this.program, this.factAssertions, message.descriptor).then((data: any) => {
+						if (data.result === 'unsat') {
+							if (previousValue) {
+								this.factAssertions[message.descriptor] = previousValue;
+							} else {
+								delete this.factAssertions[message.descriptor];
+							}
+						}
+
+						if (data.result === 'sat') {
+							updateGraphFacts(this.webviewPanel.webview, data.facts);
+						}
 					});
 					break;
 				}
