@@ -166,11 +166,11 @@ class GraphEditor {
 					});
 					break;
 				}
-				case 'selectRange': {
+				case 'focusRange': {
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
 					if (editor) {
-						const [startPosition, endPosition] = message.range;
+						const {startPosition, endPosition} = message.range;
 						editor.revealRange(ast.toVSRange(message.range));
 						editor.selection = new vscode.Selection(
 							ast.toVSPosition(startPosition),

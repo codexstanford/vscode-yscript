@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import * as Parser from 'web-tree-sitter';
+import * as ts from 'web-tree-sitter';
 
 export type YscriptExpression = OnlyIfExpression | LogicExpression;
 
@@ -25,7 +25,7 @@ export type LogicExpression = FactExpression | {
 export function getEditFromChange(
     change: { text: string; range: vscode.Range },
     text: string,
-): Parser.Edit {
+): ts.Edit {
     const [startIndex, endIndex] = getIndicesFromRange(
         change.range,
         text,
@@ -43,12 +43,14 @@ export function getEditFromChange(
     };
 }
 
-export function toVSPosition(tsPoint: Parser.Point) {
+export function toVSPosition(tsPoint: ts.Point) {
     return new vscode.Position(tsPoint.row, tsPoint.column);
 }
 
-export function toVSRange(tsRange: [Parser.Point, Parser.Point]) {
-    return new vscode.Range(toVSPosition(tsRange[0]), toVSPosition(tsRange[1]));
+export function toVSRange(tsRange: ts.Range) {
+    return new vscode.Range(
+        new vscode.Position(tsRange.startPosition.row, tsRange.startPosition.column),
+        new vscode.Position(tsRange.endPosition.row, tsRange.endPosition.column));
 }
 
 function getIndicesFromRange(
@@ -74,7 +76,7 @@ function getIndicesFromRange(
     return [startIndex, endIndex];
 }
 
-function toTSPoint(position: vscode.Position): Parser.Point {
+function toTSPoint(position: vscode.Position): ts.Point {
     return { row: position.line, column: position.character };
 }
 
