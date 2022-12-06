@@ -49,30 +49,42 @@ export async function incorporateFact(
     const solverProcess = spawnIncorporateFact(context);
     
     const promise = new Promise(resolve => {
-        solverProcess.stdout.on('data', consequences => {
-            const result: any = {};
+        solverProcess.stdout.on('data', data => {
+            const outFacts: any = {};
+            const result: any = { facts: outFacts };
             Object.entries(assertions).forEach(([descriptor, value]) => {
-                result[descriptor] = {
+                outFacts[descriptor] = {
                     value,
                     source: 'assertion'
                 };
             });
             
-            consequences
+            const consequences = data
                 .toString()
                 .trim()
                 .split('\n')
-                .filter(Boolean)
-                .forEach((conseqAst: string) => {
-                    const negated = conseqAst.startsWith('(not ');
-                    const constant = negated ? conseqAst.slice(5, -1) : conseqAst;
-                    if (!symbolsToDescriptors[constant]) throw new Error(`Received value for unknown fact "${constant}"`);
-                    if (result[symbolsToDescriptors[constant]]) return;
-                    result[symbolsToDescriptors[constant]] = {
-                        value: negated ? false : true,
-                        source: 'consequence'
-                    };
-                });
+                .filter(Boolean);
+
+            if (consequences[0] === 'unsat') {
+                result['result'] = 'unsat';
+            }
+
+            if (consequences[0] === 'sat') {
+                result['result'] = 'sat';
+                consequences
+                    .slice(1)
+                    .forEach((conseqAst: string) => {
+                        const negated = conseqAst.startsWith('(not ');
+                        const constant = negated ? conseqAst.slice(5, -1) : conseqAst;
+                        if (!symbolsToDescriptors[constant]) throw new Error(`Received value for unknown fact "${constant}"`);
+                        if (outFacts[symbolsToDescriptors[constant]]) return;
+                        outFacts[symbolsToDescriptors[constant]] = {
+                            value: negated ? false : true,
+                            source: 'consequence'
+                        };
+                    });
+            }
+            
             resolve(result);
         });
     });
@@ -128,5 +140,5 @@ function descriptorToZ3(z3: z3.Z3LowLevel, ctx: z3.Z3_context, descriptor: strin
 }
 
 function sanitize(factName: string) {
-    return factName.replace(/ /g, '_');
+    return factName.replace(/[ '"]/g, '_');
 }
