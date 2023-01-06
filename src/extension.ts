@@ -247,6 +247,7 @@ function findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
 			n.type === 'and_expr' ||
 			n.type === 'or_expr' ||
 			n.type === 'not_expr' ||
+			n.type === 'if_then' ||
 			n.type === 'only_if' ||
 			n.type === 'rule_definition'
 		);
@@ -269,6 +270,7 @@ function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 				path.push(currentNode.childForFieldName('name')?.text);
 				break;
 			}
+			case 'if_then':
 			case 'only_if': {
 				path.push(currentNode.parent?.children.findIndex(child => child.id === currentNode.id));
 				break;
@@ -279,6 +281,7 @@ function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 			case 'fact_expr': {
 				const parentNode = lineage[i - 1];
 				switch (parentNode.type) {
+					case 'if_then':
 					case 'only_if': {
 						path.push('src_expr');
 						break;
@@ -332,9 +335,10 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 				db.rules[ruleName].range = [currentNode.startPosition, currentNode.endPosition];
 				break;
 			}
+			case 'if_then':
 			case 'only_if': {
 				const destFactNode = currentNode.childForFieldName('dest_fact');
-				if (!destFactNode) throw new Error("Found ONLY IF with no dest_fact");
+				if (!destFactNode) throw new Error("Found statement with no dest_fact");
 				const descriptor = destFactNode.text;
 				db.facts[descriptor] = db.facts[descriptor] || createFact();
 				db.facts[descriptor].determiners.push({
@@ -352,7 +356,7 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 				if (!ancestorRuleName) throw new Error("Found rule with no name");
 
 				db.rules[ancestorRuleName].statements.push({
-					type: 'only_if',
+					type: currentNode.type,
 					dest_fact: {
 						descriptor,
 						range: [destFactNode.startPosition, destFactNode.endPosition]

@@ -1,14 +1,6 @@
 import * as vscode from 'vscode';
 import * as ts from 'web-tree-sitter';
 
-export type YscriptExpression = OnlyIfExpression | LogicExpression;
-
-export type OnlyIfExpression = {
-    type: 'only_if',
-    src_expr: LogicExpression,
-    dest_fact: FactExpression
-};
-
 export type FactExpression = {
     type: 'fact_expr',
     descriptor: string

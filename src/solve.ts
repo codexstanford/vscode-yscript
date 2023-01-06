@@ -107,6 +107,11 @@ function yscriptProgramToZ3(z3: z3.Z3LowLevel, ctx: z3.Z3_context, program: any)
 }
 
 function yscriptToZ3(z3: z3.Z3LowLevel, ctx: z3.Z3_context, expr: any): z3.Z3_ast {
+    if (expr.type === 'if_then') {
+        const srcExpr = yscriptToZ3(z3, ctx, expr.src_expr);
+        const destFact = yscriptToZ3(z3, ctx, expr.dest_fact);
+        return z3.Z3.mk_implies(ctx, srcExpr, destFact);
+    }
     if (expr.type === 'only_if') {
         const srcExpr = yscriptToZ3(z3, ctx, expr.src_expr);
         const destFact = yscriptToZ3(z3, ctx, expr.dest_fact);
