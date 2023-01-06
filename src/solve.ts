@@ -99,24 +99,36 @@ export async function incorporateFact(
 }
 
 function yscriptProgramToZ3(z3: z3.Z3LowLevel, ctx: z3.Z3_context, program: any): z3.Z3_ast[] {
-    return Object.values(program.rules).map((rule: any) => {
-        return rule.statements.map((statement: any) => {
-            return yscriptToZ3(z3, ctx, statement);
+    let assertions: z3.Z3_ast[] = [];
+
+    Object.values(program.rules).forEach((rule: any) => {
+        rule.statements.forEach((statement: any) => {
+            assertions = assertions.concat(yscriptStatementToZ3(z3, ctx, statement));
         });
     });
+
+    return assertions;
 }
 
-function yscriptToZ3(z3: z3.Z3LowLevel, ctx: z3.Z3_context, expr: any): z3.Z3_ast {
+function yscriptStatementToZ3(z3: z3.Z3LowLevel, ctx: z3.Z3_context, expr: any): z3.Z3_ast[] {
     if (expr.type === 'if_then') {
         const srcExpr = yscriptToZ3(z3, ctx, expr.src_expr);
         const destFact = yscriptToZ3(z3, ctx, expr.dest_fact);
-        return z3.Z3.mk_implies(ctx, srcExpr, destFact);
+        return [z3.Z3.mk_implies(ctx, srcExpr, destFact)];
     }
     if (expr.type === 'only_if') {
         const srcExpr = yscriptToZ3(z3, ctx, expr.src_expr);
         const destFact = yscriptToZ3(z3, ctx, expr.dest_fact);
-        return z3.Z3.mk_implies(ctx, srcExpr, destFact);
+        return [
+            z3.Z3.mk_implies(ctx, srcExpr, destFact),
+            z3.Z3.mk_implies(ctx, z3.Z3.mk_not(ctx, srcExpr), z3.Z3.mk_not(ctx, destFact))
+        ];
     }
+
+    throw new Error(`Unknown statement type: ${JSON.stringify(expr)}`);
+}
+
+function yscriptToZ3(z3: z3.Z3LowLevel, ctx: z3.Z3_context, expr: any): z3.Z3_ast {
     if (expr.type === 'and_expr') {
         return z3.Z3.mk_and(ctx, [
             yscriptToZ3(z3, ctx, expr.left),
