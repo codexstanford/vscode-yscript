@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import * as Parser from 'web-tree-sitter';
 import * as z3 from 'z3-solver';
 
-import * as ast from './ast';
+import * as tree from './tree';
 import * as solve from './solve';
 import * as util from './util';
 
@@ -78,13 +78,13 @@ class GraphEditor {
 		private readonly webviewPanel: vscode.WebviewPanel,
 		private readonly parser: Parser,
 		private readonly z3: z3.Z3HighLevel & z3.Z3LowLevel) {
-		// Initialize AST
+		// Initialize syntax tree
 		this.tree = parser.parse(document.getText());
 
-		// Listen for text document changes and rebuild the yscript AST and program
+		// Listen for text document changes and rebuild the yscript CST and program
 
 		const recompile = util.debounce(() => {
-			this.program = compileFromAst(this.tree.rootNode.walk());
+			this.program = compileFromCst(this.tree.rootNode.walk());
 			updateGraphProgram(webviewPanel.webview, this.program);
 		}, 100);
 
@@ -93,7 +93,7 @@ class GraphEditor {
 				if (evt.document.uri.toString() !== document.uri.toString()) return;
 
 				for (const change of evt.contentChanges) {
-					this.updateAst(evt.document.getText(), change);
+					this.updateCst(evt.document.getText(), change);
 				}
 
 				recompile();
@@ -160,10 +160,10 @@ class GraphEditor {
 
 					if (editor) {
 						const {startPosition, endPosition} = message.range;
-						editor.revealRange(ast.toVSRange(message.range));
+						editor.revealRange(tree.toVSRange(message.range));
 						editor.selection = new vscode.Selection(
-							ast.toVSPosition(startPosition),
-							ast.toVSPosition(endPosition));
+							tree.toVSPosition(startPosition),
+							tree.toVSPosition(endPosition));
 					}
 
 					break;
@@ -174,7 +174,7 @@ class GraphEditor {
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
 					if (editor) {
-						editor.revealRange(ast.toVSRange(message.range));
+						editor.revealRange(tree.toVSRange(message.range));
 					}
 
 					break;
@@ -187,9 +187,9 @@ class GraphEditor {
 		webviewPanel.onDidDispose(graphChangeSub.dispose);
 	}
 
-	private updateAst(fullText: string, change: { range: vscode.Range, text: string }) {
+	private updateCst(fullText: string, change: { range: vscode.Range, text: string }) {
 		this.tree.edit(
-			ast.getEditFromChange(change, this.tree.rootNode.text)
+			tree.getEditFromChange(change, this.tree.rootNode.text)
 		);
 
 		this.tree = this.parser.parse(fullText, this.tree);
@@ -213,7 +213,7 @@ function ensureGetIn(root: any, path: string[]): any {
 }
 
 function createFact() {
-	// See `astToGraphModel` for usage
+	// See `cstToGraphModel` for usage
 	return {
 		determiners: [],
 		requirers: {}
@@ -327,7 +327,7 @@ function gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
  * @param program Program as compiled so far
  * @returns A usefully-structured yscript program
  */
-function compileFromAst(cursor: Parser.TreeCursor, program: any = { rules: {}, facts: {} }) {
+function compileFromCst(cursor: Parser.TreeCursor, program: any = { rules: {}, facts: {} }) {
 	do {
 		const currentNode = cursor.currentNode();
 
@@ -396,7 +396,7 @@ function compileFromAst(cursor: Parser.TreeCursor, program: any = { rules: {}, f
 				//     "rule b": { 0: {} }
 				//   }
 				// We can flatten this into a list of [rule, statementIdx] paths once
-				// we've gone through the whole AST.
+				// we've gone through the whole CST.
 				program.facts[descriptor] = program.facts[descriptor] || createFact();
 				ensureGetIn(program.facts[descriptor].requirers, [ruleName, statementIdx]);
 
