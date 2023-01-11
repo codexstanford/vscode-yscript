@@ -1,3 +1,7 @@
+/**
+ * @file Utilities for dealing with Tree-sitter syntax trees.
+ */
+
 import * as vscode from 'vscode';
 import * as ts from 'web-tree-sitter';
 
@@ -13,7 +17,10 @@ export type LogicExpression = FactExpression | {
 };
 
 /** Get a Tree-sitter Edit corresponding to a replacement by `change.text` at
- * `change.range` within `text`. */
+ * `change.range` within `text`.
+ * 
+ * We can use the Edit to update our syntax tree, which is much faster than
+ * rebuilding it completely. */
 export function getEditFromChange(
     change: { text: string; range: vscode.Range },
     text: string,

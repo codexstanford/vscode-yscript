@@ -8,9 +8,11 @@ import * as ast from './ast';
 import * as solve from './solve';
 import * as util from './util';
 
+// Load resources for the graph webview directly from the installed package. Gross but simple
 const graphHtmlRelativePath = path.join('node_modules', '@codexstanford', 'logic-graph', 'resources', 'public', 'index.html');
 const graphJsRelativePath = path.join('node_modules', '@codexstanford', 'logic-graph', 'resources', 'public', 'js', 'compiled', 'app.js');
 
+// Tree-sitter parser and Z3 API can be a bit slow to load. Cache them here
 let preloadedParser: Parser;
 let preloadedZ3: z3.Z3HighLevel & z3.Z3LowLevel;
 
@@ -29,7 +31,7 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 		document: vscode.TextDocument,
 		webviewPanel: vscode.WebviewPanel,
 		token: vscode.CancellationToken): void {
-		// Initialize tree-sitter parser
+		// Initialize Tree-sitter parser
 		const parserLoad = preloadedParser
             ? Promise.resolve(preloadedParser)
             : loadParser(
@@ -42,16 +44,16 @@ class YscriptGraphEditorProvider implements vscode.CustomTextEditorProvider {
 			? Promise.resolve(preloadedZ3)
 			: z3.init();
 
-		// Start loading required files
+		// Load files required for graph webview
 		const rawHtml = fs.readFile(
 			path.join(this.context.extensionPath, graphHtmlRelativePath),
 			{ encoding: 'utf-8' });
 		const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
 		const positions = workspaceFolder ? readPositions(workspaceFolder) : Promise.resolve({});
 
-		// Finish graph init
 		Promise.all([parserLoad, z3Load, rawHtml, positions])
 			.then(([parserResolved, z3Resolved, rawHtmlResolved, positionsResolved]) => {
+				// Finish initializing webview
 				webviewPanel.webview.options = { enableScripts: true };
 				webviewPanel.webview.html = assembleGraphHtml(
 					rawHtmlResolved,
@@ -69,7 +71,6 @@ class GraphEditor {
 	private tree: Parser.Tree;
 	private program: any;
 	private factAssertions: any = {};
-	//private programState: ProgramState;
 
 	constructor(
 		private readonly extensionContext: vscode.ExtensionContext,
@@ -80,15 +81,10 @@ class GraphEditor {
 		// Initialize AST
 		this.tree = parser.parse(document.getText());
 
-		// Initialize Z3 solver
-		//this.programState = new ProgramState(z3);
-
-		// Listen for text document changes
+		// Listen for text document changes and rebuild the yscript AST and program
 
 		const recompile = util.debounce(() => {
 			this.program = compileFromAst(this.tree.rootNode.walk());
-			// this.programState.updateProgram(this.program);
-
 			updateGraphProgram(webviewPanel.webview, this.program);
 		}, 100);
 
@@ -105,7 +101,7 @@ class GraphEditor {
 
 		webviewPanel.onDidDispose(textChangeSub.dispose);
 
-		// Listen for graph editor changes
+		// Listen for events from graph view
 
 		const graphChangeSub = webviewPanel.webview.onDidReceiveMessage(message => {
 			switch (message.type) {
@@ -124,34 +120,24 @@ class GraphEditor {
 					if (!folder) return;
 					writePositions(folder, message.positions);
 					break;
-				case 'editSource': {
-					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
-
-					if (editor) {
-						// Edit text. This will be picked up by our text document change listener,
-						// which will update our AST and then our graph.
-						editor.edit(eb => {
-							eb.replace(
-								ast.toVSRange(message.range),
-								message.text
-							);
-						});
-					}
-					break;
-				}
 				case 'incorporateFact': {
+					// Try adding to our collection of fact values
+
 					const previousValue = this.factAssertions[message.descriptor];
-					let value: solve.Bool = solve.Bool.unknown;
+					let value = solve.Bool.unknown;
 					if (message.value === true) value = solve.Bool.true;
 					if (message.value === false) value = solve.Bool.false;
 
+					// Assert unknown = delete
 					if (value === solve.Bool.unknown) {
 						delete this.factAssertions[message.descriptor];
 					} else {
 						this.factAssertions[message.descriptor] = message.value;
 					}
 
-					solve.incorporateFact(this.z3, this.extensionContext, this.program, this.factAssertions, message.descriptor).then((data: any) => {
+					// Run the new facts through Z3
+					solve.checkConsequences(this.z3, this.extensionContext, this.program, this.factAssertions).then((data: any) => {
+						// If the new value can't be satisfiably incorporated, restore the previous value
 						if (data.result === 'unsat') {
 							if (previousValue) {
 								this.factAssertions[message.descriptor] = previousValue;
@@ -160,6 +146,7 @@ class GraphEditor {
 							}
 						}
 
+						// The new value was incorporated: tell the graph about the new inferences
 						if (data.result === 'sat') {
 							updateGraphFacts(this.webviewPanel.webview, data.facts);
 						}
@@ -167,6 +154,8 @@ class GraphEditor {
 					break;
 				}
 				case 'focusRange': {
+					// Select and reveal a range in the text editor.
+
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
 					if (editor) {
@@ -180,6 +169,8 @@ class GraphEditor {
 					break;
 				}
 				case 'showRange': {
+					// Like focusRange, but don't select the text.
+
 					const editor = vscode.window.visibleTextEditors.find(ed => ed.document === document);
 
 					if (editor) {
@@ -189,7 +180,7 @@ class GraphEditor {
 					break;
 				}
 				default:
-					console.log("Received unrecognized message:", message);
+					console.warn("Received unrecognized message:", message);
 			}
 		});
 
@@ -205,6 +196,13 @@ class GraphEditor {
 	}
 }
 
+/**
+ * Retrieve the value at `path` in `root`, creating parent objects if necessary
+ * along the way.
+ * 
+ * @param path An array of property names
+ * @returns root[path[0]]...[path[n]]
+ */
 function ensureGetIn(root: any, path: string[]): any {
 	if (!path.length) return root;
 
@@ -215,7 +213,7 @@ function ensureGetIn(root: any, path: string[]): any {
 }
 
 function createFact() {
-	// Yes, these are two different types, see `astToGraphModel` for details
+	// See `astToGraphModel` for usage
 	return {
 		determiners: [],
 		requirers: {}
@@ -259,7 +257,8 @@ function findLineage(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
  * node. This allows you to look up a node given its lineage.
  * 
  * @param lineage As returned by `findLineage` 
- * @returns An array of path segments, depending on the type of each ancestor in `lineage`
+ * @returns An array of path segments, depending on the type of each ancestor
+ * in `lineage`
  */
 function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 	const path = [];
@@ -311,6 +310,10 @@ function lineageToPath(lineage: Parser.SyntaxNode[]): any[] {
 	return path;
 }
 
+/**
+ * Walk `cursor` pre-order and depth-first.
+ * @returns `false` iff every node has been visited
+ */
 function gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
 	if (cursor.gotoFirstChild()) return true;
 	while (!cursor.gotoNextSibling()) {
@@ -319,7 +322,12 @@ function gotoPreorderSucc(cursor: Parser.TreeCursor): boolean {
 	return true;
 }
 
-function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts: {} }) {
+/**
+ * @param cursor A Tree-sitter syntax tree
+ * @param program Program as compiled so far
+ * @returns A usefully-structured yscript program
+ */
+function compileFromAst(cursor: Parser.TreeCursor, program: any = { rules: {}, facts: {} }) {
 	do {
 		const currentNode = cursor.currentNode();
 
@@ -328,11 +336,11 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 				const nameNode = currentNode.childForFieldName('name');
 				if (!nameNode) throw new Error("Found rule with no name");
 				const ruleName = nameNode.text;
-				db.rules[ruleName] = db.rules[ruleName] || {
+				program.rules[ruleName] = program.rules[ruleName] || {
 					statements: []
 				};
-				db.rules[ruleName].name = { range: [nameNode.startPosition, nameNode.endPosition] };
-				db.rules[ruleName].range = [currentNode.startPosition, currentNode.endPosition];
+				program.rules[ruleName].name = { range: [nameNode.startPosition, nameNode.endPosition] };
+				program.rules[ruleName].range = [currentNode.startPosition, currentNode.endPosition];
 				break;
 			}
 			case 'if_then':
@@ -340,8 +348,8 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 				const destFactNode = currentNode.childForFieldName('dest_fact');
 				if (!destFactNode) throw new Error("Found statement with no dest_fact");
 				const descriptor = destFactNode.text;
-				db.facts[descriptor] = db.facts[descriptor] || createFact();
-				db.facts[descriptor].determiners.push({
+				program.facts[descriptor] = program.facts[descriptor] || createFact();
+				program.facts[descriptor].determiners.push({
 					// Take the rule and statement index as a path, rest is irrelevant
 					path: lineageToPath(findLineage(destFactNode)).slice(0, 2),
 					position: [currentNode.startPosition, currentNode.endPosition]
@@ -355,7 +363,7 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 				const ancestorRuleName = ancestorRule?.childForFieldName('name')?.text;
 				if (!ancestorRuleName) throw new Error("Found rule with no name");
 
-				db.rules[ancestorRuleName].statements.push({
+				program.rules[ancestorRuleName].statements.push({
 					type: currentNode.type,
 					dest_fact: {
 						descriptor,
@@ -369,7 +377,7 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 			case 'or_expr':
 			case 'not_expr': {
 				const [ruleName, statementIdx, ...exprPath] = lineageToPath(findLineage(currentNode));
-				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
+				const ancestorStatement = program.rules[ruleName].statements[statementIdx];
 
 				if (!exprPath.length) throw new Error("Path to expression should contain at least src_expr");
 
@@ -389,10 +397,10 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 				//   }
 				// We can flatten this into a list of [rule, statementIdx] paths once
 				// we've gone through the whole AST.
-				db.facts[descriptor] = db.facts[descriptor] || createFact();
-				ensureGetIn(db.facts[descriptor].requirers, [ruleName, statementIdx]);
+				program.facts[descriptor] = program.facts[descriptor] || createFact();
+				ensureGetIn(program.facts[descriptor].requirers, [ruleName, statementIdx]);
 
-				const ancestorStatement = db.rules[ruleName].statements[statementIdx];
+				const ancestorStatement = program.rules[ruleName].statements[statementIdx];
 				const factNode = ensureGetIn(ancestorStatement, exprPath);
 				factNode.type = 'fact_expr';
 				factNode.descriptor = descriptor;
@@ -404,8 +412,8 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 	} while (gotoPreorderSucc(cursor));
 
 	// Flatten fact requirer hierarchies
-	for (const factName in db.facts) {
-		const fact = db.facts[factName];
+	for (const factName in program.facts) {
+		const fact = program.facts[factName];
 		const flatRequirers = [];
 
 		for (const ruleName in fact.requirers) {
@@ -418,11 +426,11 @@ function compileFromAst(cursor: Parser.TreeCursor, db: any = { rules: {}, facts:
 		fact.requirers = flatRequirers;
 	}
 
-	return db;
+	return program;
 }
 
 /**
- * Massages the HTML for the graph app to be usable by vscode. For now this just
+ * Massage the HTML for the graph app to be usable by vscode. For now this just
  * consists of replacing the hardcoded path to the compiled JS with a
  * vscode-compatible URI.
  * 
